@@ -8,19 +8,30 @@ ORANGE='\033[0;33m'
 GREEN='\033[0;32m'
 RED='\033[0;31m'
 NC='\033[0m'
-FIXED_PORT=1234
 
 # Автоматическое определение интерфейса
 NETWORK_INTERFACE=$(ip route | grep default | awk '{print $5}' | head -n1)
 
 declare -A USED_KEYS=()
+declare -A USED_PORTS=()
 
 show_menu() {
     clear
     echo -ne "${ORANGE}"
-    curl -sSf "$LOGO_URL" 2>/dev/null || echo "=== TITAN NODE MANAGER v11.0 ==="
+    curl -sSf "$LOGO_URL" 2>/dev/null || echo "=== TITAN NODE MANAGER v12.1 ==="
     echo -e "\n1) Установить компоненты\n2) Создать ноды\n3) Проверить статус\n4) Показать логи ноды\n5) Перезапустить все ноды\n6) Полная очистка\n7) Выход"
     echo -ne "${NC}"
+}
+
+generate_random_port() {
+    while true; do
+        port=$(shuf -i 30000-40000 -n 1)
+        if [[ ! -v USED_PORTS[$port] ]] && ! ss -uln | grep -q ":${port} "; then
+            USED_PORTS[$port]=1
+            echo "$port"
+            break
+        fi
+    done
 }
 
 generate_realistic_profile() {
@@ -44,24 +55,31 @@ install_dependencies() {
         net-tools \
         ccze
 
+    # Настройка сетевых параметров
+    echo "net.core.rmem_max=2500000" | sudo tee -a /etc/sysctl.conf
+    echo "net.core.wmem_max=2500000" | sudo tee -a /etc/sysctl.conf
+    sudo sysctl -p >/dev/null
+
+    # Установка Docker
     curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --batch --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
     sudo apt-get update -yq && sudo apt-get install -yq docker-ce docker-ce-cli containerd.io
     sudo systemctl enable --now docker
     sudo usermod -aG docker "$USER"
 
-    echo "net.core.rmem_max=2500000" | sudo tee -a /etc/sysctl.conf >/dev/null
-    sudo sysctl -p >/dev/null
-
-    echo -e "${GREEN}[✓] Система готова! Порт 1234/udp будет использоваться для всех нод.${NC}"
+    echo -e "${GREEN}[✓] Система готова! Перезагрузите сервер.${NC}"
     sleep 2
 }
 
 create_node() {
     local node_num=$1 identity_code=$2
     IFS=',' read -r cpu ram ssd <<< "$(generate_realistic_profile)"
+    local port=$(generate_random_port)
     local volume="titan_data_$node_num"
     local node_ip="${BASE_IP%.*}.$(( ${BASE_IP##*.} + node_num ))"
+
+    # Очистка предыдущих версий
+    docker rm -f "titan_node_$node_num" 2>/dev/null
 
     if ! docker volume create "$volume" >/dev/null || \
        ! echo "$identity_code" | docker run -i --rm -v "$volume:/data" alpine sh -c "cat > /data/identity.key"; then
@@ -72,15 +90,15 @@ create_node() {
     screen -dmS "node_$node_num" docker run -d \
         --name "titan_node_$node_num" \
         --restart unless-stopped \
-        --network host \
-        -p ${FIXED_PORT}:1234/udp \
+        --network bridge \
+        -p ${port}:1234/udp \
         -v "$volume:/root/.titanedge" \
-        nezha123/titan-edge
+        nezha123/titan-edge:latest
 
     sudo ip addr add "${node_ip}/24" dev "$NETWORK_INTERFACE" 2>/dev/null
     
-    printf "${GREEN}[✓] Нода %02d | %2d ядер | %4dGB RAM | %4dGB SSD | IP: %s | Порт: %d${NC}\n" \
-        "$node_num" "$cpu" "$ram" "$ssd" "$node_ip" "$FIXED_PORT"
+    printf "${GREEN}[✓] Нода %02d | %2d ядер | %4dGB RAM | %4dGB SSD | Порт: %5d | IP: %s${NC}\n" \
+        "$node_num" "$cpu" "$ram" "$ssd" "$port" "$node_ip"
 }
 
 setup_nodes() {
@@ -125,7 +143,8 @@ check_nodes() {
     
     echo -e "\n${ORANGE}СЕТЕВЫЕ НАСТРОЙКИ:${NC}"
     ip -br addr show "$NETWORK_INTERFACE" | awk '{print $1" "$3}'
-    echo -e "\n${ORANGE}ВАЖНО: Все ноды используют порт ${FIXED_PORT} на разных IP!${NC}"
+    echo -e "\n${ORANGE}ОТКРЫТЫЕ ПОРТЫ:${NC}"
+    ss -uln | grep 'titan_node' | awk '{print $5}'
     read -p $'\nНажмите любую клавишу...' -n1 -s
     clear
 }
