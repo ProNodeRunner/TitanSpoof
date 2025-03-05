@@ -16,7 +16,7 @@ NETWORK_INTERFACE=$(ip route | grep default | awk '{print $5}' | head -n1)
 show_menu() {
     clear
     echo -ne "${ORANGE}"
-    curl -sSf $LOGO_URL 2>/dev/null || echo "=== TITAN NODE MANAGER v6.3 ==="
+    curl -sSf $LOGO_URL 2>/dev/null || echo "=== TITAN NODE MANAGER v7.0 ==="
     echo -e "\n1) Установить компоненты"
     echo "2) Создать ноды"
     echo "3) Проверить статус"
@@ -39,36 +39,47 @@ generate_realistic_profile() {
 install_dependencies() {
     echo -e "${ORANGE}[*] Инициализация системы...${NC}"
     export DEBIAN_FRONTEND=noninteractive
-    
-    # Подавление диалогов
-    sudo mkdir -p /etc/needrestart/conf.d
-    echo -e "\$nrconf{restart} = 'a';\n\$nrconf{kernelhints} = 0;" | sudo tee /etc/needrestart/conf.d/99-disable.conf >/dev/null
-    sudo apt-get purge -y unattended-upgrades
 
-    # Установка
-    sudo apt-get update -y && sudo apt-get install -yq \
-        curl docker.io jq screen cgroup-tools
+    # Удаление старых версий
+    echo -e "${ORANGE}[*] Удаление старых пакетов...${NC}"
+    sudo apt-get remove -y docker docker-engine docker.io containerd runc 2>/dev/null
+    sudo apt-get purge -y docker-ce docker-ce-cli 2>/dev/null
+
+    # Обновление системы
+    echo -e "${ORANGE}[*] Обновление пакетов...${NC}"
+    sudo apt-get update -y
+    sudo apt-get upgrade -y
+
+    # Установка базовых зависимостей
+    echo -e "${ORANGE}[*] Установка компонентов...${NC}"
+    sudo apt-get install -yq \
+        apt-transport-https \
+        ca-certificates \
+        curl \
+        gnupg \
+        lsb-release \
+        jq \
+        screen \
+        cgroup-tools \
+        net-tools
+
+    # Добавление репозитория Docker
+    echo -e "${ORANGE}[*] Настройка репозитория...${NC}"
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+    # Установка Docker
+    echo -e "${ORANGE}[*] Установка Docker...${NC}"
+    sudo apt-get update -y
+    sudo apt-get install -yq docker-ce docker-ce-cli containerd.io
 
     # Настройка Docker
+    echo -e "${ORANGE}[*] Настройка окружения...${NC}"
     sudo systemctl start docker
     sudo systemctl enable docker
     sudo usermod -aG docker $USER
     newgrp docker
 
-    # Сервис автозапуска
-    sudo tee /etc/systemd/system/titan-node.service >/dev/null <<EOF
-[Unit]
-Description=Titan Node Service
-After=docker.service
-
-[Service]
-ExecStart=/usr/bin/screen -dmS titan_nodes /bin/bash $0 --auto-start
-Restart=always
-
-[Install]
-WantedBy=multi-user.target
-EOF
-    sudo systemctl daemon-reload
     echo -e "${GREEN}[✓] Система готова!${NC}"
 }
 
@@ -135,9 +146,7 @@ cleanup() {
     sleep 1
 
     # Проверка активности Docker
-    if ! systemctl is-active docker &>/dev/null; then
-        echo -e "${GREEN}[✓] Docker не активен, пропускаем удаление контейнеров/томов${NC}"
-    else
+    if systemctl is-active docker &>/dev/null; then
         # Контейнеры
         echo -e "${ORANGE}[*] Поиск контейнеров...${NC}"
         containers=$(docker ps -aq --filter "name=titan_node" 2>/dev/null)
@@ -165,6 +174,8 @@ cleanup() {
         else
             echo -e "${GREEN}[✓] Тома данных не найдены${NC}"
         fi
+    else
+        echo -e "${GREEN}[✓] Docker не активен, пропускаем удаление контейнеров/томов${NC}"
     fi
 
     # Сеть
