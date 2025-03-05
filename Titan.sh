@@ -8,30 +8,19 @@ ORANGE='\033[0;33m'
 GREEN='\033[0;32m'
 RED='\033[0;31m'
 NC='\033[0m'
+FIXED_PORT=1234
 
 # Автоматическое определение интерфейса
 NETWORK_INTERFACE=$(ip route | grep default | awk '{print $5}' | head -n1)
 
 declare -A USED_KEYS=()
-declare -A USED_PORTS=()
 
 show_menu() {
     clear
     echo -ne "${ORANGE}"
-    curl -sSf "$LOGO_URL" 2>/dev/null || echo "=== TITAN NODE MANAGER v10.2 ==="
+    curl -sSf "$LOGO_URL" 2>/dev/null || echo "=== TITAN NODE MANAGER v11.0 ==="
     echo -e "\n1) Установить компоненты\n2) Создать ноды\n3) Проверить статус\n4) Показать логи ноды\n5) Перезапустить все ноды\n6) Полная очистка\n7) Выход"
     echo -ne "${NC}"
-}
-
-generate_random_port() {
-    while true; do
-        port=$(shuf -i 30000-40000 -n 1)
-        if [[ ! -v USED_PORTS[$port] ]] && ! ss -uln | grep -q ":${port} "; then
-            USED_PORTS[$port]=1
-            echo "$port"
-            break
-        fi
-    done
 }
 
 generate_realistic_profile() {
@@ -53,7 +42,6 @@ install_dependencies() {
         screen \
         cgroup-tools \
         net-tools \
-        shuf \
         ccze
 
     curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --batch --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
@@ -65,14 +53,13 @@ install_dependencies() {
     echo "net.core.rmem_max=2500000" | sudo tee -a /etc/sysctl.conf >/dev/null
     sudo sysctl -p >/dev/null
 
-    echo -e "${GREEN}[✓] Система готова!${NC}"
+    echo -e "${GREEN}[✓] Система готова! Порт 1234/udp будет использоваться для всех нод.${NC}"
     sleep 2
 }
 
 create_node() {
     local node_num=$1 identity_code=$2
     IFS=',' read -r cpu ram ssd <<< "$(generate_realistic_profile)"
-    local port=$(generate_random_port)
     local volume="titan_data_$node_num"
     local node_ip="${BASE_IP%.*}.$(( ${BASE_IP##*.} + node_num ))"
 
@@ -86,18 +73,18 @@ create_node() {
         --name "titan_node_$node_num" \
         --restart unless-stopped \
         --network host \
+        -p ${FIXED_PORT}:1234/udp \
         -v "$volume:/root/.titanedge" \
-        nezha123/titan-edge --port=$port
+        nezha123/titan-edge
 
     sudo ip addr add "${node_ip}/24" dev "$NETWORK_INTERFACE" 2>/dev/null
     
-    printf "${GREEN}[✓] Нода %02d | %2d ядер | %4dGB RAM | %4dGB SSD | Порт: %5d | IP: %s${NC}\n" \
-        "$node_num" "$cpu" "$ram" "$ssd" "$port" "$node_ip"
+    printf "${GREEN}[✓] Нода %02d | %2d ядер | %4dGB RAM | %4dGB SSD | IP: %s | Порт: %d${NC}\n" \
+        "$node_num" "$cpu" "$ram" "$ssd" "$node_ip" "$FIXED_PORT"
 }
 
 setup_nodes() {
     declare -gA USED_KEYS=()
-    declare -gA USED_PORTS=()
     
     while true; do
         read -p "Введите количество нод: " node_count
@@ -138,7 +125,7 @@ check_nodes() {
     
     echo -e "\n${ORANGE}СЕТЕВЫЕ НАСТРОЙКИ:${NC}"
     ip -br addr show "$NETWORK_INTERFACE" | awk '{print $1" "$3}'
-    echo -e "\n${ORANGE}ОТКРОЙТЕ ПОРТЫ:${NC}\nsudo ufw allow 30000:40000/udp && sudo ufw enable"
+    echo -e "\n${ORANGE}ВАЖНО: Все ноды используют порт ${FIXED_PORT} на разных IP!${NC}"
     read -p $'\nНажмите любую клавишу...' -n1 -s
     clear
 }
