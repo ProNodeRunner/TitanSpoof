@@ -18,7 +18,7 @@ declare -A USED_PORTS=()
 show_menu() {
     clear
     echo -ne "${ORANGE}"
-    curl -sSf "$LOGO_URL" 2>/dev/null || echo "=== TITAN NODE MANAGER v12.1 ==="
+    curl -sSf "$LOGO_URL" 2>/dev/null || echo "=== TITAN NODE MANAGER v12.2 ==="
     echo -e "\n1) Установить компоненты\n2) Создать ноды\n3) Проверить статус\n4) Показать логи ноды\n5) Перезапустить все ноды\n6) Полная очистка\n7) Выход"
     echo -ne "${NC}"
 }
@@ -53,14 +53,16 @@ install_dependencies() {
         screen \
         cgroup-tools \
         net-tools \
-        ccze
+        ccze \
+        netcat
 
-    # Настройка сетевых параметров
+    sudo ufw allow 30000:40000/udp
+    sudo ufw reload
+
     echo "net.core.rmem_max=2500000" | sudo tee -a /etc/sysctl.conf
     echo "net.core.wmem_max=2500000" | sudo tee -a /etc/sysctl.conf
     sudo sysctl -p >/dev/null
 
-    # Установка Docker
     curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --batch --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
     sudo apt-get update -yq && sudo apt-get install -yq docker-ce docker-ce-cli containerd.io
@@ -78,7 +80,6 @@ create_node() {
     local volume="titan_data_$node_num"
     local node_ip="${BASE_IP%.*}.$(( ${BASE_IP##*.} + node_num ))"
 
-    # Очистка предыдущих версий
     docker rm -f "titan_node_$node_num" 2>/dev/null
 
     if ! docker volume create "$volume" >/dev/null || \
@@ -96,7 +97,13 @@ create_node() {
         nezha123/titan-edge:latest
 
     sudo ip addr add "${node_ip}/24" dev "$NETWORK_INTERFACE" 2>/dev/null
-    
+    sleep 5
+
+    if ! docker exec "titan_node_$node_num" curl -sSf https://api.titan.network/health >/dev/null; then
+        echo -e "${RED}[✗] Нода $node_num: Нет интернет-доступа${NC}"
+        return 1
+    fi
+
     printf "${GREEN}[✓] Нода %02d | %2d ядер | %4dGB RAM | %4dGB SSD | Порт: %5d | IP: %s${NC}\n" \
         "$node_num" "$cpu" "$ram" "$ssd" "$port" "$node_ip"
 }
@@ -135,16 +142,42 @@ check_nodes() {
     echo -e "${ORANGE}ТЕКУЩИЙ СТАТУС НОД:${NC}"
     docker ps -a --filter "name=titan_node" --format '{{.Names}} {{.Status}} {{.Ports}}' | \
     awk '{
-        split($2, status, " ");
-        uptime = (status[3] == "minutes") ? status[2]"m" : status[2]"s";
-        color = ($2 ~ /Up/) ? "\033[32m" : "\033[31m";
-        printf "%-15s %s%-7s \033[37m(up %-4s)\033[0m %-15s\n", $1, color, status[1], uptime, $3
+        status_color = ($2 ~ /Up/) ? "\033[32m" : "\033[31m";
+        time_unit = $4;
+        value = $3;
+        
+        if ($2 == "Up") {
+            total_minutes = 0;
+            if (time_unit == "weeks") total_minutes = value * 10080;
+            if (time_unit == "days") total_minutes = value * 1440;
+            if (time_unit == "hours") total_minutes = value * 60;
+            if (time_unit == "minutes") total_minutes = value;
+            
+            days = int(total_minutes / 1440);
+            hours = int((total_minutes % 1440) / 60);
+            minutes = int(total_minutes % 60);
+            uptime = "";
+            if (days > 0) uptime = sprintf("%dд ", days);
+            if (hours > 0) uptime = uptime sprintf("%dч ", hours);
+            uptime = uptime sprintf("%dм", minutes);
+        }
+        else {
+            uptime = "N/A";
+        }
+        
+        printf "%-15s %s%-12s\033[37m (up %-15s)\033[0m %s\n", 
+               $1, status_color, $2, uptime, $5
     }'
     
     echo -e "\n${ORANGE}СЕТЕВЫЕ НАСТРОЙКИ:${NC}"
     ip -br addr show "$NETWORK_INTERFACE" | awk '{print $1" "$3}'
-    echo -e "\n${ORANGE}ОТКРЫТЫЕ ПОРТЫ:${NC}"
-    ss -uln | grep 'titan_node' | awk '{print $5}'
+    echo -e "\n${ORANGE}АКТИВНЫЕ ПОРТЫ:${NC}"
+    docker ps --filter "name=titan_node" --format "{{.Names}}" | xargs -I{} docker port {} | grep udp
+    
+    echo -e "\n${ORANGE}СИНХРОНИЗАЦИЯ:${NC}"
+    docker ps --filter "name=titan_node" --format "{{.Names}}" | xargs -I{} sh -c \
+    'echo -n "{}: "; docker exec {} titan-edge info sync 2>/dev/null | grep "Sync Progress" || echo "OFFLINE"'
+    
     read -p $'\nНажмите любую клавишу...' -n1 -s
     clear
 }
