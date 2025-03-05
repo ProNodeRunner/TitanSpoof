@@ -81,7 +81,8 @@ install_dependencies() {
     sudo systemctl enable --now docker
     sudo usermod -aG docker $USER
 
-    echo -e "${GREEN}[✓] Система готова! Перезапустите терминал.${NC}"
+    echo -e "${GREEN}[✓] Системные компоненты успешно установлены!${NC}"
+    sleep 2
 }
 
 create_node() {
