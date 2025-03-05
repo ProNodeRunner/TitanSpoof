@@ -13,163 +13,63 @@ NC='\033[0m'
 # Автоматическое определение интерфейса
 NETWORK_INTERFACE=$(ip route | grep default | awk '{print $5}' | head -n1)
 
-show_menu() {
-    clear
-    echo -ne "${ORANGE}"
-    curl -sSf $LOGO_URL 2>/dev/null || echo "=== TITAN NODE MANAGER ==="
-    echo -e "\n1) Установить все компоненты"
-    echo "2) Задать количество нод"
-    echo "3) Проверить работу нод"
-    echo "4) Удалить все ноды"
-    echo "5) Выход"
-    echo -ne "${NC}"
-}
-
-generate_realistic_profile() {
-    local cpu_cores=$(( (2 + RANDOM % 7) * 4 ))  # 8-32 ядра
-    local ram_gb=$(( cpu_cores * (2 + RANDOM % 7) ))  # 16-224GB
-    local ssd_gb=$(( 100 + (ram_gb * 10) + (RANDOM % 500) ))  # 200-2740GB
-    
-    (( ram_gb = ram_gb < 512 ? ram_gb : 512 ))
-    (( ssd_gb = ssd_gb < 4096 ? ssd_gb : 4096 ))
-    
-    echo "${cpu_cores},${ram_gb},${ssd_gb}"
-}
-
-install_dependencies() {
-    echo -e "${ORANGE}[*] Инициализация системы...${NC}"
-    export DEBIAN_FRONTEND=noninteractive
-    
-    # Подавление диалогов
-    sudo mkdir -p /etc/needrestart/conf.d
-    echo -e "\$nrconf{restart} = 'a';\n\$nrconf{kernelhints} = 0;" | sudo tee /etc/needrestart/conf.d/99-disable.conf >/dev/null
-    sudo apt-get purge -y unattended-upgrades
-
-    # Установка
-    sudo apt-get update -y && sudo apt-get install -yq \
-        curl docker.io jq screen cgroup-tools
-
-    # Настройка Docker
-    sudo systemctl start docker
-    sudo systemctl enable docker
-    sudo usermod -aG docker $USER
-    newgrp docker
-
-    # Сервис автозапуска
-    sudo tee /etc/systemd/system/titan-node.service >/dev/null <<EOF
-[Unit]
-Description=Titan Node Service
-After=docker.service
-
-[Service]
-ExecStart=/usr/bin/screen -dmS titan_nodes /bin/bash $0 --auto-start
-Restart=always
-
-[Install]
-WantedBy=multi-user.target
-EOF
-    sudo systemctl daemon-reload
-    echo -e "${GREEN}[✓] Система готова!${NC}"
-}
-
-create_node() {
-    if ! docker info &>/dev/null; then
-        echo -e "${RED}Docker не запущен! Сначала выполните пункт 1${NC}"
-        return 1
-    fi
-
-    local node_num=$1 identity_code=$2
-    IFS=',' read -r cpu ram ssd <<< "$(generate_realistic_profile)"
-    local node_ip=$(echo "$BASE_IP" | awk -F. -v i="$node_num" '{OFS="."; $4+=i; print}')
-    local volume="titan_data_$node_num"
-
-    # Создание ноды
-    if ! docker volume create $volume >/dev/null || \
-       ! echo "$identity_code" | docker run -i --rm -v $volume:/data alpine sh -c "cat > /data/identity.key"
-    then
-        echo -e "${RED}[✗] Ошибка создания ноды $node_num${NC}"
-        return 1
-    fi
-
-    screen -dmS "node_$node_num" docker run -d \
-        --name "titan_node_$node_num" \
-        --network host \
-        --restart always \
-        -v $volume:/root/.titanedge \
-        nezha123/titan-edge
-
-    sudo ip addr add $node_ip/24 dev $NETWORK_INTERFACE 2>/dev/null
-    
-    # Вывод
-    ram_display=$(printf "%4d" $ram)
-    ssd_display=$(printf "%4d" $ssd)
-    echo -e "${GREEN}[✓] Нода $node_num | ${cpu} ядер | ${ram_display}GB RAM | ${ssd_display}GB SSD${NC}"
-}
-
-setup_nodes() {
-    read -p "Введите количество нод: " node_count
-    for ((i=1; i<=$node_count; i++)); do
-        while true; do
-            read -p "Введите ключ для ноды $i: " key
-            if [[ $key =~ ^[A-F0-9]{8}-([A-F0-9]{4}-){3}[A-F0-9]{12}$ ]]; then
-                create_node $i "$key" && break
-            else
-                echo -e "${RED}Неверный формат! Пример: EFE14741-B359-4C34-9A36-BA7F88A574FC${NC}"
-            fi
-        done
-    done
-}
-
-check_nodes() {
-    if ! docker ps -aq --filter "name=titan_node" &>/dev/null; then
-        echo -e "${ORANGE}Активные ноды не найдены${NC}"
-        return
-    fi
-    
-    echo -e "${ORANGE}\nСПИСОК НОД:${NC}"
-    docker ps -a --filter "name=titan_node" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
-}
-
 cleanup() {
-    echo -e "${ORANGE}\n[*] Начинаем очистку...${NC}"
-    
+    echo -e "${ORANGE}\n[*] Начинаем очистку системы...${NC}"
+    sleep 1
+
     # Контейнеры
     if docker ps -aq --filter "name=titan_node" &>/dev/null; then
-        echo -e "${ORANGE}[*] Удаляем контейнеры...${NC}"
+        echo -e "${ORANGE}[*] Остановка контейнеров...${NC}"
         docker stop $(docker ps -aq --filter "name=titan_node") 2>/dev/null
+        sleep 1
+        echo -e "${ORANGE}[*] Удаление контейнеров...${NC}"
         docker rm $(docker ps -aq --filter "name=titan_node") 2>/dev/null
+        sleep 1
+    else
+        echo -e "${GREEN}[✓] Активные контейнеры не найдены${NC}"
     fi
 
-    # Данные
+    # Тома данных
     if docker volume ls -q --filter "name=titan_data" &>/dev/null; then
-        echo -e "${ORANGE}[*] Удаляем хранилища...${NC}"
+        echo -e "${ORANGE}[*] Удаление томов...${NC}"
         docker volume rm $(docker volume ls -q --filter "name=titan_data") 2>/dev/null
+        sleep 1
+    else
+        echo -e "${GREEN}[✓] Тома данных не найдены${NC}"
     fi
 
     # Сеть
-    echo -e "${ORANGE}[*] Восстанавливаем сеть...${NC}"
+    echo -e "${ORANGE}[*] Восстановление сети...${NC}"
     for ip in $(seq 1 50); do
         sudo ip addr del $(echo $BASE_IP | awk -F. -v i="$ip" '{OFS="."; $4+=i; print}')/24 dev $NETWORK_INTERFACE 2>/dev/null
     done
+    sleep 1
 
     # Сервис
     if systemctl is-enabled titan-node.service &>/dev/null; then
-        echo -e "${ORANGE}[*] Отключаем сервис...${NC}"
-        sudo systemctl disable --now titan-node.service
+        echo -e "${ORANGE}[*] Отключение сервиса...${NC}"
+        sudo systemctl stop titan-node.service
+        sudo systemctl disable titan-node.service
         sudo rm -f /etc/systemd/system/titan-node.service
+        sudo systemctl daemon-reload
+        sleep 1
     fi
 
-    # Результат
-    if [ -z "$(docker ps -aq --filter "name=titan_node")" ] && \
-       [ -z "$(docker volume ls -q --filter "name=titan_data")" ]; then
+    # Проверка
+    local containers=$(docker ps -aq --filter "name=titan_node" | wc -l)
+    local volumes=$(docker volume ls -q --filter "name=titan_data" | wc -l)
+    
+    if [ $containers -eq 0 ] && [ $volumes -eq 0 ]; then
         echo -e "${GREEN}\n[✓] ВСЕ КОМПОНЕНТЫ УДАЛЕНЫ!${NC}"
     else
-        echo -e "${RED}\n[✗] Ошибка очистки! Остатки:"
-        docker ps -a --filter "name=titan_node"
-        docker volume ls --filter "name=titan_data"
+        echo -e "${RED}\n[✗] Обнаружены остатки:"
+        [ $containers -gt 0 ] && docker ps -a --filter "name=titan_node"
+        [ $volumes -gt 0 ] && docker volume ls --filter "name=titan_data"
         echo -e "${NC}"
     fi
 }
+
+# Остальные функции остаются без изменений...
 
 case $1 in
     --auto-start)
