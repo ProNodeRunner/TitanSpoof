@@ -18,12 +18,13 @@ declare -A USED_KEYS=()
 show_menu() {
     clear
     echo -ne "${ORANGE}"
-    curl -sSf $LOGO_URL 2>/dev/null || echo "=== TITAN NODE MANAGER v8.4 ==="
+    curl -sSf $LOGO_URL 2>/dev/null || echo "=== TITAN NODE MANAGER v8.5 ==="
     echo -e "\n1) Установить компоненты"
     echo "2) Создать ноды"
     echo "3) Проверить статус"
-    echo "4) Полная очистка"
-    echo "5) Выход"
+    echo "4) Перезапустить все ноды"
+    echo "5) Полная очистка"
+    echo "6) Выход"
     echo -ne "${NC}"
 }
 
@@ -138,13 +139,41 @@ setup_nodes() {
 }
 
 check_nodes() {
+    clear
+    echo -e "${ORANGE}ТЕКУЩИЙ СТАТУС НОД:${NC}"
+    
     if ! docker ps -aq --filter "name=titan_node" &>/dev/null; then
-        echo -e "${ORANGE}Активные ноды не найдены${NC}"
-        return
+        echo -e "${RED}Активные ноды не найдены${NC}"
+    else
+        docker ps -a --filter "name=titan_node" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
     fi
     
-    echo -e "${ORANGE}\nСПИСОК НОД:${NC}"
-    docker ps -a --filter "name=titan_node" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+    echo -e "\n${ORANGE}СЕТЕВЫЕ НАСТРОЙКИ:${NC}"
+    ip -o addr show $NETWORK_INTERFACE | awk '{print $2" "$4}'
+    
+    read -p $'\nНажмите любую клавишу чтобы продолжить...' -n1 -s
+    clear
+}
+
+restart_nodes() {
+    echo -e "${ORANGE}[*] Перезапуск всех нод...${NC}"
+    
+    # Останавливаем и удаляем контейнеры
+    docker ps -aq --filter "name=titan_node" | xargs -r docker rm -f
+    
+    # Пересоздаем ноды из конфига
+    if [ -f $CONFIG_FILE ]; then
+        source $CONFIG_FILE
+        for key in "${!USED_KEYS[@]}"; do
+            node_num=$(echo "$key" | sed 's/node_//')
+            create_node $node_num "${USED_KEYS[$key]}"
+        done
+        echo -e "${GREEN}[✓] Все ноды успешно перезапущены!${NC}"
+    else
+        echo -e "${RED}Конфигурация нод не найдена!${NC}"
+    fi
+    
+    sleep 2
 }
 
 cleanup() {
@@ -179,6 +208,24 @@ cleanup() {
     sleep 3
 }
 
+# Автозапуск при перезагрузке
+if [ ! -f /etc/systemd/system/titan-node.service ]; then
+    sudo bash -c "cat > /etc/systemd/system/titan-node.service <<EOF
+[Unit]
+Description=Titan Node AutoStart
+After=network.target docker.service
+
+[Service]
+ExecStart=$(realpath $0) --auto-start
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+EOF"
+    sudo systemctl enable titan-node.service
+fi
+
 case $1 in
     --auto-start)
         if [ -f $CONFIG_FILE ]; then
@@ -194,8 +241,9 @@ case $1 in
                 1) install_dependencies ;;
                 2) setup_nodes ;;
                 3) check_nodes ;;
-                4) cleanup ;;
-                5) exit 0 ;;
+                4) restart_nodes ;;
+                5) cleanup ;;
+                6) exit 0 ;;
                 *) echo -e "${RED}Ошибка выбора!${NC}"; sleep 1 ;;
             esac
         done
