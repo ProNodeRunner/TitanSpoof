@@ -18,7 +18,7 @@ declare -A USED_KEYS=()
 show_menu() {
     clear
     echo -ne "${ORANGE}"
-    curl -sSf $LOGO_URL 2>/dev/null || echo "=== TITAN NODE MANAGER v8.5 ==="
+    curl -sSf $LOGO_URL 2>/dev/null || echo "=== TITAN NODE MANAGER v8.6 ==="
     echo -e "\n1) Установить компоненты"
     echo "2) Создать ноды"
     echo "3) Проверить статус"
@@ -117,7 +117,17 @@ create_node() {
 
 setup_nodes() {
     declare -gA USED_KEYS=()
-    read -p "Введите количество нод: " node_count
+    
+    # Валидация количества нод
+    while true; do
+        read -p "Введите количество нод: " node_count
+        if [[ "$node_count" =~ ^[1-9][0-9]*$ ]]; then
+            break
+        else
+            echo -e "${RED}Ошибка: введите целое положительное число!${NC}"
+        fi
+    done
+
     for ((i=1; i<=$node_count; i++)); do
         while true; do
             read -p "Введите ключ для ноды $i: " key
@@ -133,7 +143,7 @@ setup_nodes() {
         done
     done
 
-    echo -e "\n${GREEN}Все ноды успешно созданы!${NC}"
+    echo -e "\n${GREEN}Все $node_count нод успешно созданы!${NC}"
     read -p $'\nНажмите любую клавишу чтобы вернуться в меню...' -n1 -s
     clear
 }
