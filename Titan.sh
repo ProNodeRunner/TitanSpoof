@@ -18,14 +18,14 @@ declare -A USED_PORTS=()
 show_menu() {
     clear
     echo -ne "${ORANGE}"
-    curl -sSf "$LOGO_URL" 2>/dev/null || echo "=== TITAN NODE MANAGER v9.6 ==="
-    echo -e "\n1) Установить компоненты\n2) Создать ноды\n3) Проверить статус\n4) Перезапустить все ноды\n5) Полная очистка\n6) Выход"
+    curl -sSf "$LOGO_URL" 2>/dev/null || echo "=== TITAN NODE MANAGER v10.0 ==="
+    echo -e "\n1) Установить компоненты\n2) Создать ноды\n3) Проверить статус\n4) Показать логи ноды\n5) Перезапустить все ноды\n6) Полная очистка\n7) Выход"
     echo -ne "${NC}"
 }
 
 generate_random_port() {
     while true; do
-        port=$(shuf -i 1000-10000 -n 1)
+        port=$(shuf -i 30000-40000 -n 1)
         if [[ ! -v USED_PORTS[$port] ]] && ! ss -uln | grep -q ":${port} "; then
             USED_PORTS[$port]=1
             echo "$port"
@@ -35,7 +35,7 @@ generate_random_port() {
 }
 
 generate_realistic_profile() {
-    echo "$((4*(2+RANDOM%7))),$((32*(1+RANDOM%16))),$((500*(1+RANDOM%6)))"
+    echo "$((12 + 4*(RANDOM%5))),$((64*(1+RANDOM%8))),$((1000*(1+RANDOM%3)))" # 12-32 ядра, 64-512GB RAM, 1000-3000GB SSD
 }
 
 install_dependencies() {
@@ -73,6 +73,7 @@ create_node() {
     IFS=',' read -r cpu ram ssd <<< "$(generate_realistic_profile)"
     local port=$(generate_random_port)
     local volume="titan_data_$node_num"
+    local node_ip="${BASE_IP%.*}.$(( ${BASE_IP##*.} + node_num ))"
 
     if ! docker volume create "$volume" >/dev/null || \
        ! echo "$identity_code" | docker run -i --rm -v "$volume:/data" alpine sh -c "cat > /data/identity.key"; then
@@ -83,14 +84,14 @@ create_node() {
     screen -dmS "node_$node_num" docker run -d \
         --name "titan_node_$node_num" \
         --restart always \
-        -p "${port}:1234/udp" \
+        --network host \
         -v "$volume:/root/.titanedge" \
-        nezha123/titan-edge
+        nezha123/titan-edge --port=$port
 
-    sudo ip addr add "${BASE_IP%.*}.$(( ${BASE_IP##*.} + node_num ))/24" dev "$NETWORK_INTERFACE" 2>/dev/null
+    sudo ip addr add "${node_ip}/24" dev "$NETWORK_INTERFACE" 2>/dev/null
     
-    printf "${GREEN}[✓] Нода %02d | %2d ядер | %4dGB RAM | %4dGB SSD | Порт: %5d${NC}\n" \
-        "$node_num" "$cpu" "$ram" "$ssd" "$port"
+    printf "${GREEN}[✓] Нода %02d | %2d ядер | %4dGB RAM | %4dGB SSD | Порт: %5d | IP: %s${NC}\n" \
+        "$node_num" "$cpu" "$ram" "$ssd" "$port" "$node_ip"
 }
 
 setup_nodes() {
@@ -128,13 +129,23 @@ check_nodes() {
     echo -e "${ORANGE}ТЕКУЩИЙ СТАТУС НОД:${NC}"
     docker ps -a --filter "name=titan_node" --format '{{.Names}} {{.Status}} {{.Ports}}' | \
     awk '{
-        split($3, ports, /[:->]/); 
-        status_color = ($2 ~ /Up/) ? "\033[32m" : "\033[31m";
-        printf "%-15s %s%-20s\033[0m %-10s\n", $1, status_color, $2, ports[2]
-    }' | sed 's/0.0.0.0://g'
+        split($2, status, " ");
+        uptime = (status[3] == "minutes") ? status[2]"m" : status[2]"s";
+        printf "%-15s \033[32m%-7s \033[37m(up %-4s)\033[0m %-15s\n", $1, status[1], uptime, $3
+    }'
     
     echo -e "\n${ORANGE}СЕТЕВЫЕ НАСТРОЙКИ:${NC}"
     ip -br addr show "$NETWORK_INTERFACE" | awk '{print $1" "$3}'
+    echo -e "\n${ORANGE}ПОРТЫ ДОЛЖНЫ БЫТЬ ОТКРЫТЫ:${NC}"
+    echo "sudo ufw allow 30000:40000/udp"
+    read -p $'\nНажмите любую клавишу...' -n1 -s
+    clear
+}
+
+show_logs() {
+    read -p "Введите номер ноды: " num
+    echo -e "${ORANGE}Логи titan_node_${num}:${NC}"
+    docker logs --tail 50 "titan_node_${num}" 2>&1 | grep -iE 'error|fail|warn|binding' | ccze -A
     read -p $'\nНажмите любую клавишу...' -n1 -s
     clear
 }
@@ -218,9 +229,10 @@ case $1 in
                 1) install_dependencies ;;
                 2) setup_nodes ;;
                 3) check_nodes ;;
-                4) restart_nodes ;;
-                5) cleanup ;;
-                6) exit 0 ;;
+                4) show_logs ;;
+                5) restart_nodes ;;
+                6) cleanup ;;
+                7) exit 0 ;;
                 *) echo -e "${RED}Неверный выбор!${NC}"; sleep 1 ;;
             esac
         done
