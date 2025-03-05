@@ -16,7 +16,7 @@ NETWORK_INTERFACE=$(ip route | grep default | awk '{print $5}' | head -n1)
 show_menu() {
     clear
     echo -ne "${ORANGE}"
-    curl -sSf $LOGO_URL 2>/dev/null || echo "=== TITAN NODE MANAGER v6.0 ==="
+    curl -sSf $LOGO_URL 2>/dev/null || echo "=== TITAN NODE MANAGER v6.1 ==="
     echo -e "\n1) Установить компоненты"
     echo "2) Создать ноды"
     echo "3) Проверить статус"
@@ -80,7 +80,7 @@ create_node() {
 
     local node_num=$1 identity_code=$2
     IFS=',' read -r cpu ram ssd <<< "$(generate_realistic_profile)"
-    local node_ip=$(echo "$BASE_IP | awk -F. -v i="$node_num" '{OFS="."; $4+=i; print}')"
+    local node_ip=$(echo "$BASE_IP" | awk -F. -v i="$node_num" '{OFS="."; $4+=i; print}')
     local volume="titan_data_$node_num"
 
     # Создание ноды
