@@ -16,7 +16,7 @@ NETWORK_INTERFACE=$(ip route | grep default | awk '{print $5}' | head -n1)
 show_menu() {
     clear
     echo -ne "${ORANGE}"
-    curl -sSf $LOGO_URL 2>/dev/null || echo "=== TITAN NODE MANAGER v6.1 ==="
+    curl -sSf $LOGO_URL 2>/dev/null || echo "=== TITAN NODE MANAGER v6.2 ==="
     echo -e "\n1) Установить компоненты"
     echo "2) Создать ноды"
     echo "3) Проверить статус"
@@ -135,11 +135,13 @@ cleanup() {
     sleep 1
 
     # Контейнеры
-    containers=$(docker ps -aq --filter "name=titan_node")
+    echo -e "${ORANGE}[*] Поиск контейнеров...${NC}"
+    containers=$(docker ps -aq --filter "name=titan_node" 2>/dev/null)
+    
     if [ -n "$containers" ]; then
         echo -e "${ORANGE}[*] Остановка контейнеров...${NC}"
         docker stop $containers 2>/dev/null
-        sleep 2
+        sleep 3
         
         echo -e "${ORANGE}[*] Удаление контейнеров...${NC}"
         docker rm $containers 2>/dev/null
@@ -149,11 +151,13 @@ cleanup() {
     fi
 
     # Тома данных
-    volumes=$(docker volume ls -q --filter "name=titan_data")
+    echo -e "${ORANGE}[*] Поиск томов...${NC}"
+    volumes=$(docker volume ls -q --filter "name=titan_data" 2>/dev/null)
+    
     if [ -n "$volumes" ]; then
         echo -e "${ORANGE}[*] Удаление томов...${NC}"
         docker volume rm $volumes 2>/dev/null
-        sleep 1
+        sleep 2
     else
         echo -e "${GREEN}[✓] Тома данных не найдены${NC}"
     fi
@@ -167,16 +171,20 @@ cleanup() {
     sleep 1
 
     # Сервис
+    echo -e "${ORANGE}[*] Проверка сервиса...${NC}"
     if systemctl is-enabled titan-node.service &>/dev/null; then
         echo -e "${ORANGE}[*] Отключение сервиса...${NC}"
-        sudo systemctl stop titan-node.service
-        sudo systemctl disable titan-node.service
-        sudo rm -f /etc/systemd/system/titan-node.service
-        sudo systemctl daemon-reload
-        sleep 1
+        sudo systemctl stop titan-node.service 2>/dev/null
+        sudo systemctl disable titan-node.service 2>/dev/null
+        sudo rm -f /etc/systemd/system/titan-node.service 2>/dev/null
+        sudo systemctl daemon-reload 2>/dev/null
+        sleep 2
+    else
+        echo -e "${GREEN}[✓] Сервис не активен${NC}"
     fi
 
     # Проверка
+    echo -e "${ORANGE}[*] Финальная проверка...${NC}"
     containers=$(docker ps -aq --filter "name=titan_node" | wc -l)
     volumes=$(docker volume ls -q --filter "name=titan_data" | wc -l)
     
@@ -188,6 +196,10 @@ cleanup() {
         [ $volumes -gt 0 ] && docker volume ls --filter "name=titan_data"
         echo -e "${NC}"
     fi
+
+    # Фиксированная пауза перед возвратом
+    echo -e "\n${ORANGE}[*] Возврат в меню через 5 секунд...${NC}"
+    sleep 5
 }
 
 case $1 in
