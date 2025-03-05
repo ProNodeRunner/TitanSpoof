@@ -5,195 +5,156 @@ CONFIG_FILE="/etc/multinode.conf"
 BASE_IP="192.168.1.100"
 NETWORK_INTERFACE="eth0"
 TIMEZONE="Europe/Moscow"
-LOGO_URL="https://raw.githubusercontent.com/ProNodeRunner/Logo/refs/heads/main/Logo"
+LOGO_URL="https://raw.githubusercontent.com/ProNodeRunner/Logo/main/Logo"
 ORANGE='\033[0;33m'
+GREEN='\033[0;32m'
+RED='\033[0;31m'
 NC='\033[0m'
-
-declare -A HW_PROFILES=(
-    ["basic"]="CPU=4,RAM=8,SSD=512"
-    ["pro"]="CPU=8,RAM=32,SSD=2048"
-    ["ultra"]="CPU=16,RAM=128,SSD=4096"
-)
 
 show_menu() {
     clear
     echo -e "${ORANGE}"
-    curl -sSf $LOGO_URL 2>/dev/null || echo -e "=== MultiNodeDocker ==="
-    echo -e "\n\n\n"
-    echo " ༺ Многоузловая Установка Pro v2.0 ༻ "
-    echo "▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔"
-    echo "1) Установить все компоненты"
+    curl -sSf $LOGO_URL 2>/dev/null || echo "=== Titan Node Manager ==="
+    echo -e "\n1) Установить все компоненты"
     echo "2) Задать количество нод"
-    echo "3) Проверить работу контейнеров"
-    echo "4) Проверить отпечатки"
+    echo "3) Проверить работу нод"
+    echo "4) Удалить все ноды"
     echo "5) Выход"
     echo -e "${NC}"
 }
 
+generate_hw_profile() {
+    local cpu=$((4 * (1 + RANDOM % 8)))    # 4-32 ядра (кратно 4)
+    local ram=$((8 * (1 + RANDOM % 16)))   # 8-128 GB RAM
+    local ssd=$((256 * (1 + RANDOM % 8)))  # 256-2048 GB SSD
+    echo "$cpu,$ram,$ssd"
+}
+
 install_dependencies() {
     echo -e "${ORANGE}[*] Инициализация системы...${NC}"
-    
-    # Исправление: Добавление автоматического принятия решений
     export DEBIAN_FRONTEND=noninteractive
+    
+    # Подавление системных диалогов
     sudo mkdir -p /etc/needrestart/conf.d
     echo -e "\$nrconf{restart} = 'a';\n\$nrconf{kernelhints} = 0;" | sudo tee /etc/needrestart/conf.d/99-disable.conf >/dev/null
-    sudo apt-get remove -y unattended-upgrades
+    sudo apt-get purge -y unattended-upgrades
 
+    # Установка пакетов
     sudo apt-get update -y
     sudo apt-get install -yq \
-        curl git gnupg ca-certificates lsb-release \
-        apt-transport-https software-properties-common \
-        jq iproute2 net-tools uidmap dbus-user-session \
-        cgroup-tools cgroupfs-mount libcgroup1 screen
+        curl docker.io jq screen \
+        cgroup-tools iptables
 
-    echo -e "${ORANGE}[*] Установка Docker...${NC}"
-    curl -fsSL https://get.docker.com | sudo sh -s -- --yes
+    # Настройка Docker
+    sudo systemctl enable --now docker
     sudo usermod -aG docker $USER
 
-    echo -e "${ORANGE}[*] Оптимизация ядра...${NC}"
-    sudo modprobe br_netfilter
-    sudo sysctl -w net.ipv4.ip_forward=1
-    sudo sysctl -w net.ipv6.conf.all.forwarding=1
-    sudo sysctl -w vm.drop_caches=3
-
     # Systemd сервис
-    echo -e "${ORANGE}[*] Настройка автозапуска...${NC}"
-    sudo tee /etc/systemd/system/multinode.service >/dev/null <<EOF
+    sudo tee /etc/systemd/system/titan-node.service >/dev/null <<EOF
 [Unit]
-Description=MultiNode Service
+Description=Titan Node Service
 After=docker.service
 
 [Service]
-ExecStart=/usr/bin/screen -dmS nodes /bin/bash $0
+ExecStart=/usr/bin/screen -dmS titan_nodes /bin/bash $0 --auto-start
 Restart=always
 
 [Install]
 WantedBy=multi-user.target
 EOF
-    sudo systemctl enable multinode.service
-
-    echo -e "${ORANGE}[✓] Система готова!${NC}"
+    sudo systemctl daemon-reload
+    sudo systemctl enable titan-node.service
+    echo -e "${GREEN}[✓] Система готова!${NC}"
 }
 
 create_fake_proc() {
     local cpu=$1 ram=$2
     mkdir -p /fake_proc
     
+    models=("Intel(R) Xeon(R) Platinum 8375C" "AMD EPYC 7B12" "ARM Neoverse-N1")
+    model=${models[$RANDOM % ${#models[@]}]}
+    
     for i in $(seq 0 $(($cpu-1))); do
         echo "processor : $i" >> /fake_proc/cpuinfo
-        echo "model name : Intel(R) Xeon(R) Platinum 8375C CPU @ 2.90GHz" >> /fake_proc/cpuinfo
-        echo "cpu MHz : 2900.000" >> /fake_proc/cpuinfo
+        echo "model name : $model" >> /fake_proc/cpuinfo
+        echo "cpu MHz : $((2400 + RANDOM % 1000)).000" >> /fake_proc/cpuinfo
     done
     
     mem_total_kb=$(($ram * 1024 * 1024))
-    sed "s/MemTotal.*/MemTotal:       ${mem_total_kb} kB/" /proc/meminfo > /fake_proc/meminfo
+    sed "s/MemTotal.*/MemTotal: ${mem_total_kb} kB/" /proc/meminfo > /fake_proc/meminfo
 }
 
 spoof_hardware() {
-    local cpu=$1 ram=$2
-    
-    mount -t proc none /proc -o remount
     mount --bind /fake_proc/meminfo /proc/meminfo
-    
-    mkdir -p /sys/fs/cgroup/memory/fake
-    echo $((ram * 1024 * 1024 * 1024)) > /sys/fs/cgroup/memory/fake/memory.limit_in_bytes
-    echo $$ > /sys/fs/cgroup/memory/fake/cgroup.procs
-    
-    echo "Architecture:        x86_64
-CPU(s):               ${cpu}
-Model name:          Intel(R) Xeon(R) Platinum 8375C" > /fake_proc/lscpu
-    mount --bind /fake_proc/lscpu /usr/bin/lscpu
+    echo $(( $1 * 1024 * 1024 * 1024 )) > /sys/fs/cgroup/memory/memory.limit_in_bytes
 }
 
 create_node() {
-    local node_num=$1 hw_profile=$2 node_ip=$3 identity_code=$4
-    local volume_name="node${node_num}_data"
+    local node_num=$1 identity_code=$2
+    IFS=',' read -r cpu ram ssd <<< "$(generate_hw_profile)"
+    local volume="titan_data_$node_num"
+    local node_ip=$(echo "$BASE_IP" | awk -F. -v i="$node_num" '{OFS="."; $4+=i; print}')
 
-    IFS=',' read -ra HW <<< "${HW_PROFILES[$hw_profile]}"
-    CPU=$(echo "${HW[0]}" | cut -d'=' -f2)
-    RAM=$(echo "${HW[1]}" | cut -d'=' -f2)
-    SSD=$(echo "${HW[2]}" | cut -d'=' -f2)
+    docker volume create $volume >/dev/null
+    echo "$identity_code" | docker run -i --rm -v $volume:/data alpine sh -c "cat > /data/identity.key"
 
-    docker rm -f "node${node_num}" 2>/dev/null
-
-    echo -e "${ORANGE}[*] Инициализация ноды ${node_num}...${NC}"
-    docker volume create "$volume_name"
-    echo "$identity_code" | docker run -i --rm -v "$volume_name:/data" alpine sh -c "cat > /data/identity.key"
-
-    sudo ip addr add "$node_ip/24" dev "$NETWORK_INTERFACE" 2>/dev/null
-
-    screen -dmS "node$node_num" docker run -d \
-        --name "node${node_num}" \
-        --restart unless-stopped \
-        --privileged \
+    screen -dmS "node_$node_num" docker run -d \
+        --name "titan_node_$node_num" \
         --network host \
-        -v "${volume_name}:/etc/node_data" \
+        --restart always \
+        -v $volume:/root/.titanedge \
         -v /fake_proc:/fake_proc \
-        -e TZ="$TIMEZONE" \
-        your-node-image \
-        /bin/sh -c '
-            create_fake_proc $(cat /etc/node_data/cpu_cores) $(cat /etc/node_data/ram_gb)
-            spoof_hardware $(cat /etc/node_data/cpu_cores) $(cat /etc/node_data/ram_gb)
-            exec /app/worker \
-                --key $(cat /etc/node_data/identity_code) \
-                --ip "\$(hostname -I | awk "{print \\\$1}")" \
-                --cpu \$(cat /etc/node_data/cpu_cores) \
-                --ram \$(cat /etc/node_data/ram_gb) \
-                --ssd \$(cat /etc/node_data/ssd_gb)'
+        nezha123/titan-edge \
+        /bin/sh -c "create_fake_proc $cpu $ram; spoof_hardware $ram; ./worker --key \$(cat /root/.titanedge/identity.key)"
+
+    sudo ip addr add $node_ip/24 dev $NETWORK_INTERFACE
+    echo -e "${GREEN}[✓] Нода $node_num: ${cpu} ядер, ${ram}GB RAM, ${ssd}GB SSD${NC}"
 }
 
 setup_nodes() {
-    read -p "Введите количество нод: " NODE_COUNT
-    select profile in "${!HW_PROFILES[@]}"; do
-        [[ -n $profile ]] && break
-    done
-    
-    for ((i=1; i<=NODE_COUNT; i++)); do
-        read -p "Введите ключ для ноды $i: " identity_code
-        node_ip=$(echo "$BASE_IP" | awk -F. -v i="$i" '{OFS="."; $4 += i; print}')
-        create_node "$i" "$profile" "$node_ip" "$identity_code"
+    read -p "Введите количество нод: " node_count
+    for ((i=1; i<=$node_count; i++)); do
+        read -p "Введите ключ для ноды $i: " key
+        create_node $i "$key"
     done
 }
 
-check_containers() {
-    if ! docker info &>/dev/null; then
-        echo -e "${ORANGE}Докер не запущен! Запустите сначала установку компонентов.${NC}"
-        return
-    fi
-    
-    count=$(docker ps -a --filter "name=node" --format "{{.Names}}" | wc -l)
-    if [ $count -eq 0 ]; then
-        echo -e "${ORANGE}Запущенные контейнеры не найдены${NC}"
-    else
-        docker ps -a --filter "name=node" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
-    fi
+check_nodes() {
+    docker ps -a --filter "name=titan_node" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
 }
 
-show_fingerprints() {
-    for volume in $(docker volume ls -q --filter "name=node"); do
-        echo -e "${ORANGE}${volume}${NC}"
-        docker run --rm -v "$volume:/data" alpine sh -c '
-            echo "MAC: \$(cat /data/mac_address)"
-            echo "Hostname: \$(cat /data/hostname)"
-            echo "Machine ID: \$(cat /data/machine_id)"
-            echo "CPU: \$(cat /data/cpu_cores) cores"
-            echo "RAM: \$(cat /data/ram_gb) GB"
-            echo "SSD: \$(cat /data/ssd_gb) GB"
-        '
-        echo "▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔"
-    done
+cleanup() {
+    docker stop $(docker ps -aq --filter "name=titan_node") 2>/dev/null
+    docker rm $(docker ps -aq --filter "name=titan_node") 2>/dev/null
+    docker volume prune -f
+    sudo systemctl disable titan-node.service
 }
 
-while true; do
-    show_menu
-    read -p "Выберите опцию: " choice
-    case $choice in
-        1) install_dependencies ;;
-        2) setup_nodes ;;
-        3) check_containers ;;
-        4) show_fingerprints ;;
-        5) exit 0 ;;
-        *) echo -e "${ORANGE}Ошибка выбора!${NC}"; sleep 1 ;;
-    esac
-    read -p "Нажмите Enter..."
-done
+case $1 in
+    --auto-start)
+        if [ -f $CONFIG_FILE ]; then
+            source $CONFIG_FILE
+            setup_nodes
+        fi
+        ;;
+    *)
+        while true; do
+            show_menu
+            read -p "Выбор: " choice
+            case $choice in
+                1) install_dependencies ;;
+                2) setup_nodes ;;
+                3) check_nodes ;;
+                4) cleanup ;;
+                5) exit ;;
+                *) echo -e "${RED}Неверный выбор!${NC}"; sleep 1 ;;
+            esac
+        done
+        ;;
+esac
+
+if [ $(docker ps -q --filter "name=titan_node" | wc -l) -gt 0 ]; then
+    echo -e "${GREEN}\nНОДЫ УСПЕШНО УСТАНОВЛЕНЫ!${NC}"
+else
+    echo -e "${RED}\nОШИБКА УСТАНОВКИ!${NC}"
+fi
