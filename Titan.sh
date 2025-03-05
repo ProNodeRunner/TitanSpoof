@@ -18,7 +18,7 @@ declare -A USED_PORTS=()
 show_menu() {
     clear
     echo -ne "${ORANGE}"
-    curl -sSf "$LOGO_URL" 2>/dev/null || echo "=== TITAN NODE MANAGER v10.0 ==="
+    curl -sSf "$LOGO_URL" 2>/dev/null || echo "=== TITAN NODE MANAGER v10.2 ==="
     echo -e "\n1) Установить компоненты\n2) Создать ноды\n3) Проверить статус\n4) Показать логи ноды\n5) Перезапустить все ноды\n6) Полная очистка\n7) Выход"
     echo -ne "${NC}"
 }
@@ -35,7 +35,7 @@ generate_random_port() {
 }
 
 generate_realistic_profile() {
-    echo "$((12 + 4*(RANDOM%5))),$((64*(1+RANDOM%8))),$((1000*(1+RANDOM%3)))" # 12-32 ядра, 64-512GB RAM, 1000-3000GB SSD
+    echo "$((12 + 4*(RANDOM%5))),$((64*(1+RANDOM%8))),$((1000*(1+RANDOM%3)))"
 }
 
 install_dependencies() {
@@ -53,7 +53,8 @@ install_dependencies() {
         screen \
         cgroup-tools \
         net-tools \
-        shuf
+        shuf \
+        ccze
 
     curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --batch --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
@@ -83,7 +84,7 @@ create_node() {
 
     screen -dmS "node_$node_num" docker run -d \
         --name "titan_node_$node_num" \
-        --restart always \
+        --restart unless-stopped \
         --network host \
         -v "$volume:/root/.titanedge" \
         nezha123/titan-edge --port=$port
@@ -131,13 +132,13 @@ check_nodes() {
     awk '{
         split($2, status, " ");
         uptime = (status[3] == "minutes") ? status[2]"m" : status[2]"s";
-        printf "%-15s \033[32m%-7s \033[37m(up %-4s)\033[0m %-15s\n", $1, status[1], uptime, $3
+        color = ($2 ~ /Up/) ? "\033[32m" : "\033[31m";
+        printf "%-15s %s%-7s \033[37m(up %-4s)\033[0m %-15s\n", $1, color, status[1], uptime, $3
     }'
     
     echo -e "\n${ORANGE}СЕТЕВЫЕ НАСТРОЙКИ:${NC}"
     ip -br addr show "$NETWORK_INTERFACE" | awk '{print $1" "$3}'
-    echo -e "\n${ORANGE}ПОРТЫ ДОЛЖНЫ БЫТЬ ОТКРЫТЫ:${NC}"
-    echo "sudo ufw allow 30000:40000/udp"
+    echo -e "\n${ORANGE}ОТКРОЙТЕ ПОРТЫ:${NC}\nsudo ufw allow 30000:40000/udp && sudo ufw enable"
     read -p $'\nНажмите любую клавишу...' -n1 -s
     clear
 }
@@ -145,7 +146,12 @@ check_nodes() {
 show_logs() {
     read -p "Введите номер ноды: " num
     echo -e "${ORANGE}Логи titan_node_${num}:${NC}"
-    docker logs --tail 50 "titan_node_${num}" 2>&1 | grep -iE 'error|fail|warn|binding' | ccze -A
+    logs=$(docker logs --tail 50 "titan_node_${num}" 2>&1 | grep -iE 'error|fail|warn|binding')
+    if command -v ccze &>/dev/null; then
+        echo "$logs" | ccze -A
+    else
+        echo "$logs"
+    fi
     read -p $'\nНажмите любую клавишу...' -n1 -s
     clear
 }
@@ -170,39 +176,31 @@ restart_nodes() {
 cleanup() {
     echo -e "${ORANGE}\n[!] НАЧИНАЕМ ПОЛНУЮ ОЧИСТКУ [!]${NC}"
     
-    # Контейнеры
-    echo -e "${ORANGE}[1/5] Удаление контейнеров...${NC}"
-    containers=$(docker ps -aq --filter "name=titan_node" 2>/dev/null)
-    [ -n "$containers" ] && docker rm -f $containers >/dev/null 2>&1
+    echo -e "${ORANGE}[1/5] Контейнеры...${NC}"
+    docker ps -aq --filter "name=titan_node" | xargs -r docker rm -f
     
-    # Тома
-    echo -e "${ORANGE}[2/5] Удаление томов...${NC}"
-    volumes=$(docker volume ls -q --filter "name=titan_data" 2>/dev/null)
-    [ -n "$volumes" ] && docker volume rm $volumes >/dev/null 2>&1
+    echo -e "${ORANGE}[2/5] Тома...${NC}"
+    docker volume ls -q --filter "name=titan_data" | xargs -r docker volume rm
     
-    # Docker
-    echo -e "${ORANGE}[3/5] Удаление Docker...${NC}"
-    sudo apt-get purge -yq docker-ce docker-ce-cli containerd.io >/dev/null 2>&1
-    sudo apt-get autoremove -yq >/dev/null 2>&1
-    sudo rm -rf /var/lib/docker /etc/docker >/dev/null 2>&1
+    echo -e "${ORANGE}[3/5] Docker...${NC}"
+    sudo apt-get purge -yq docker-ce docker-ce-cli containerd.io
+    sudo apt-get autoremove -yq
+    sudo rm -rf /var/lib/docker /etc/docker
     
-    # Screen
-    echo -e "${ORANGE}[4/5] Очистка screen...${NC}"
-    screen -ls | grep "node_" | awk -F. '{print $1}' | xargs -r -I{} screen -X -S {} quit >/dev/null 2>&1
+    echo -e "${ORANGE}[4/5] Screen...${NC}"
+    screen -ls | grep "node_" | awk -F. '{print $1}' | xargs -r -I{} screen -X -S {} quit
     
-    # Сеть
-    echo -e "${ORANGE}[5/5] Восстановление сети...${NC}"
+    echo -e "${ORANGE}[5/5] Сеть...${NC}"
     for i in {1..50}; do
         node_ip="${BASE_IP%.*}.$(( ${BASE_IP##*.} + i ))"
-        sudo ip addr del "$node_ip/24" dev "$NETWORK_INTERFACE" >/dev/null 2>&1
+        sudo ip addr del "$node_ip/24" dev "$NETWORK_INTERFACE" 2>/dev/null
     done
 
-    echo -e "\n${GREEN}[✓] ВСЕ КОМПОНЕНТЫ УСПЕШНО УДАЛЕНЫ!${NC}"
+    echo -e "\n${GREEN}[✓] Все компоненты удалены!${NC}"
     sleep 3
     clear
 }
 
-# Автозапуск
 [ ! -f /etc/systemd/system/titan-node.service ] && sudo bash -c "cat > /etc/systemd/system/titan-node.service <<EOF
 [Unit]
 Description=Titan Node Service
@@ -211,7 +209,7 @@ After=network.target docker.service
 [Service]
 ExecStart=$(realpath "$0") --auto-start
 Restart=always
-RestartSec=10
+RestartSec=30
 
 [Install]
 WantedBy=multi-user.target
