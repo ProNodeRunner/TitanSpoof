@@ -16,7 +16,7 @@ NETWORK_INTERFACE=$(ip route | grep default | awk '{print $5}' | head -n1)
 show_menu() {
     clear
     echo -ne "${ORANGE}"
-    curl -sSf $LOGO_URL 2>/dev/null || echo "=== TITAN NODE MANAGER v7.0 ==="
+    curl -sSf $LOGO_URL 2>/dev/null || echo "=== TITAN NODE MANAGER v7.1 ==="
     echo -e "\n1) Установить компоненты"
     echo "2) Создать ноды"
     echo "3) Проверить статус"
@@ -75,12 +75,10 @@ install_dependencies() {
 
     # Настройка Docker
     echo -e "${ORANGE}[*] Настройка окружения...${NC}"
-    sudo systemctl start docker
-    sudo systemctl enable docker
+    sudo systemctl enable --now docker
     sudo usermod -aG docker $USER
-    newgrp docker
 
-    echo -e "${GREEN}[✓] Система готова!${NC}"
+    echo -e "${GREEN}[✓] Система готова! Перезапустите терминал для применения изменений групп.${NC}"
 }
 
 create_node() {
