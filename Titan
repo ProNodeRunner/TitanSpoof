@@ -1,0 +1,140 @@
+#!/bin/bash
+
+# Конфигурация
+CONFIG_FILE="/etc/titan_nodes.conf"
+BASE_IP="192.168.1.100"
+NETWORK_INTERFACE="eth0"
+TIMEZONE="Europe/Moscow"
+LOGO_URL="https://raw.githubusercontent.com/ProNodeRunner/Logo/main/Logo"
+ORANGE='\033[0;33m'
+GREEN='\033[0;32m'
+RED='\033[0;31m'
+NC='\033[0m'
+
+declare -A HW_PROFILES=(
+    ["basic"]="CPU=4,RAM=8,SSD=512"
+    ["pro"]="CPU=8,RAM=32,SSD=2048"
+    ["ultra"]="CPU=16,RAM=128,SSD=4096"
+)
+
+show_menu() {
+    clear
+    echo -e "${ORANGE}"
+    curl -sSf $LOGO_URL 2>/dev/null || echo "=== Titan Node Manager ==="
+    echo -e "\n1) Установить все компоненты"
+    echo "2) Задать количество нод и ключи"
+    echo "3) Проверить работу нод"
+    echo "4) Удалить все ноды"
+    echo "5) Выход"
+    echo -e "${NC}"
+}
+
+install_dependencies() {
+    echo -e "${ORANGE}[*] Установка зависимостей...${NC}"
+    export DEBIAN_FRONTEND=noninteractive
+    sudo apt-get update -y
+    sudo apt-get install -yq curl docker.io jq screen
+
+    sudo systemctl enable docker
+    sudo usermod -aG docker $USER
+
+    sudo tee /etc/systemd/system/titan-node.service >/dev/null <<EOF
+[Unit]
+Description=Titan Node Service
+After=docker.service
+
+[Service]
+ExecStart=/usr/bin/screen -dmS titan_nodes /bin/bash $0 --auto-start
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    sudo systemctl enable titan-node.service
+}
+
+create_fake_proc() {
+    local cpu=$1 ram=$2
+    mkdir -p /fake_proc
+    for i in $(seq 0 $(($cpu-1))); do
+        echo "processor : $i" >> /fake_proc/cpuinfo
+        echo "model name : Intel(R) Xeon(R) Platinum 8375C" >> /fake_proc/cpuinfo
+    done
+    sed "s/MemTotal.*/MemTotal: $(($ram * 1024 * 1024)) kB/" /proc/meminfo > /fake_proc/meminfo
+}
+
+spoof_hardware() {
+    mount --bind /fake_proc/meminfo /proc/meminfo
+    echo $(( $1 * 1024 * 1024 * 1024 )) > /sys/fs/cgroup/memory/memory.limit_in_bytes
+}
+
+create_node() {
+    local node_num=$1 profile=$2 identity_code=$3
+    IFS=',' read -ra HW <<< "${HW_PROFILES[$profile]}"
+    local cpu=$(echo "${HW[0]}" | cut -d'=' -f2)
+    local ram=$(echo "${HW[1]}" | cut -d'=' -f2)
+    local volume="titan_data_$node_num"
+
+    docker volume create $volume >/dev/null
+    echo "$identity_code" | docker run -i --rm -v $volume:/data alpine sh -c "cat > /data/identity.key"
+
+    screen -dmS "node_$node_num" docker run -d \
+        --name "titan_node_$node_num" \
+        --network host \
+        --restart always \
+        -v $volume:/root/.titanedge \
+        -v /fake_proc:/fake_proc \
+        nezha123/titan-edge \
+        /bin/sh -c "create_fake_proc $cpu $ram; spoof_hardware $ram; ./worker --key \$(cat /root/.titanedge/identity.key)"
+}
+
+setup_nodes() {
+    read -p "Количество нод: " node_count
+    select profile in "${!HW_PROFILES[@]}"; do [[ -n $profile ]] && break; done
+
+    for ((i=1; i<=$node_count; i++)); do
+        read -p "Ключ для ноды $i: " key
+        create_node $i $profile "$key"
+        sudo ip addr add $(echo $BASE_IP | awk -F. -v i="$i" '{OFS="."; $4+=i; print}')/24 dev $NETWORK_INTERFACE
+    done
+}
+
+check_nodes() {
+    docker ps -a --filter "name=titan_node" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+}
+
+cleanup() {
+    docker stop $(docker ps -aq --filter "name=titan_node") 2>/dev/null
+    docker rm $(docker ps -aq --filter "name=titan_node") 2>/dev/null
+    docker volume prune -f
+    sudo systemctl disable titan-node.service
+}
+
+case $1 in
+    --auto-start) 
+        if [ -f $CONFIG_FILE ]; then
+            source $CONFIG_FILE
+            setup_nodes
+        fi
+        ;;
+    *)
+        while true; do
+            show_menu
+            read -p "Выбор: " choice
+            case $choice in
+                1) install_dependencies ;;
+                2) setup_nodes ;;
+                3) check_nodes ;;
+                4) cleanup ;;
+                5) exit ;;
+                *) echo -e "${RED}Неверный выбор!${NC}"; sleep 1 ;;
+            esac
+        done
+        ;;
+esac
+
+if [ $(docker ps -q --filter "name=titan_node" | wc -l) -gt 0 ]; then
+    echo -e "${GREEN}\nНОДЫ УСПЕШНО УСТАНОВЛЕНЫ!${NC}"
+else
+    echo -e "${RED}\nОШИБКА УСТАНОВКИ!${NC}"
+fi
