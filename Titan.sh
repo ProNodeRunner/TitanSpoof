@@ -13,10 +13,12 @@ NC='\033[0m'
 # Автоматическое определение интерфейса
 NETWORK_INTERFACE=$(ip route | grep default | awk '{print $5}' | head -n1)
 
+declare -A USED_KEYS=()
+
 show_menu() {
     clear
     echo -ne "${ORANGE}"
-    curl -sSf $LOGO_URL 2>/dev/null || echo "=== TITAN NODE MANAGER v8.0 ==="
+    curl -sSf $LOGO_URL 2>/dev/null || echo "=== TITAN NODE MANAGER v8.2 ==="
     echo -e "\n1) Установить компоненты"
     echo "2) Создать ноды"
     echo "3) Проверить статус"
@@ -26,12 +28,14 @@ show_menu() {
 }
 
 generate_realistic_profile() {
-    local cpu_cores=$(( (2 + RANDOM % 7) * 4 ))  # 8-32 ядра
-    local ram_gb=$(( cpu_cores * (2 + RANDOM % 7) ))  # 16-224GB
-    local ssd_gb=$(( 100 + (ram_gb * 10) + (RANDOM % 500) ))  # 200-2740GB
+    # CPU: 8-32 ядер (кратно 4)
+    local cpu_cores=$(( 4 * (2 + RANDOM % 7) ))  # 8,12,16...28
     
-    (( ram_gb = ram_gb < 512 ? ram_gb : 512 ))
-    (( ssd_gb = ssd_gb < 4096 ? ssd_gb : 4096 ))
+    # RAM: 64-512GB (кратно 32)
+    local ram_gb=$(( 32 * (2 + RANDOM % 15) ))   # 64,96,128...512
+    
+    # SSD: 500-3000GB (кратно 500)
+    local ssd_gb=$(( 500 * (1 + RANDOM % 6) ))   # 500,1000...3000
     
     echo "${cpu_cores},${ram_gb},${ssd_gb}"
 }
@@ -62,22 +66,13 @@ install_dependencies() {
         cgroup-tools \
         net-tools
 
-    # Добавление репозитория Docker
-    echo -e "${ORANGE}[*] Настройка репозитория Docker...${NC}"
-    if [ ! -f /usr/share/keyrings/docker-archive-keyring.gpg ]; then
-        curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --batch --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
-    fi
-    if [ ! -f /etc/apt/sources.list.d/docker.list ]; then
-        echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
-    fi
+    # Настройка Docker
+    echo -e "${ORANGE}[*] Настройка Docker...${NC}"
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --batch --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
 
-    # Установка Docker
-    echo -e "${ORANGE}[*] Установка Docker...${NC}"
     sudo apt-get update -yq
     sudo apt-get install -yq docker-ce docker-ce-cli containerd.io
-
-    # Настройка Docker
-    echo -e "${ORANGE}[*] Настройка сервисов...${NC}"
     sudo systemctl enable --now docker
     sudo usermod -aG docker $USER
 
@@ -120,12 +115,17 @@ create_node() {
 }
 
 setup_nodes() {
+    declare -gA USED_KEYS=()
     read -p "Введите количество нод: " node_count
     for ((i=1; i<=$node_count; i++)); do
         while true; do
             read -p "Введите ключ для ноды $i: " key
-            if [[ $key =~ ^[A-F0-9]{8}-([A-F0-9]{4}-){3}[A-F0-9]{12}$ ]]; then
-                create_node $i "$key" && break
+            key_upper=${key^^}
+            if [[ ${USED_KEYS[$key_upper]} ]]; then
+                echo -e "${RED}Ключ уже используется! Введите уникальный ключ.${NC}"
+            elif [[ $key_upper =~ ^[A-F0-9]{8}-([A-F0-9]{4}-){3}[A-F0-9]{12}$ ]]; then
+                USED_KEYS["$key_upper"]=1
+                create_node $i "$key_upper" && break
             else
                 echo -e "${RED}Неверный формат! Пример: EFE14741-B359-4C34-9A36-BA7F88A574FC${NC}"
             fi
@@ -169,13 +169,6 @@ cleanup() {
         node_ip=$(echo "$BASE_IP" | awk -F. -v i="$ip" '{OFS="."; $4+=i; print}')
         sudo ip addr del $node_ip/24 dev $NETWORK_INTERFACE 2>/dev/null
     done
-
-    # Удаление сервиса
-    echo -e "${ORANGE}[*] Удаление сервиса...${NC}"
-    sudo systemctl stop titan-node.service 2>/dev/null
-    sudo systemctl disable titan-node.service 2>/dev/null
-    sudo rm -f /etc/systemd/system/titan-node.service
-    sudo systemctl daemon-reload 2>/dev/null
 
     # Финализация
     echo -e "${GREEN}\n[✓] ВСЕ КОМПОНЕНТЫ УДАЛЕНЫ!${NC}"
