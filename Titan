@@ -32,12 +32,31 @@ show_menu() {
 install_dependencies() {
     echo -e "${ORANGE}[*] Установка зависимостей...${NC}"
     export DEBIAN_FRONTEND=noninteractive
+
+    # Отключение автоматических обновлений
+    sudo systemctl stop unattended-upgrades
+    sudo apt-get purge -y unattended-upgrades
+
+    # Настройка автоматического принятия решений
+    sudo mkdir -p /etc/needrestart/conf.d
+    echo -e "\$nrconf{restart} = 'a';\n\$nrconf{kernelhints} = 0;" | sudo tee /etc/needrestart/conf.d/99-autorestart.conf >/dev/null
+
+    # Обновление системы
     sudo apt-get update -y
-    sudo apt-get install -yq curl docker.io jq screen
+    sudo apt-get -yqo Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" upgrade
 
-    sudo systemctl enable docker
+    # Установка основных компонентов
+    sudo apt-get install -yq \
+        curl docker.io jq screen \
+        iptables libxtables12 bridge-utils \
+        containerd runc dnsmasq-base
+
+    # Настройка Docker
+    sudo systemctl enable --now docker
     sudo usermod -aG docker $USER
+    sudo systemctl stop docker.service docker.socket
 
+    # Настройка автозапуска
     sudo tee /etc/systemd/system/titan-node.service >/dev/null <<EOF
 [Unit]
 Description=Titan Node Service
@@ -50,6 +69,7 @@ Restart=always
 [Install]
 WantedBy=multi-user.target
 EOF
+    sudo systemctl daemon-reload
     sudo systemctl enable titan-node.service
 }
 
@@ -86,6 +106,8 @@ create_node() {
         -v /fake_proc:/fake_proc \
         nezha123/titan-edge \
         /bin/sh -c "create_fake_proc $cpu $ram; spoof_hardware $ram; ./worker --key \$(cat /root/.titanedge/identity.key)"
+
+    sudo ip addr add $(echo $BASE_IP | awk -F. -v i="$node_num" '{OFS="."; $4+=i; print}')/24 dev $NETWORK_INTERFACE
 }
 
 setup_nodes() {
@@ -95,7 +117,6 @@ setup_nodes() {
     for ((i=1; i<=$node_count; i++)); do
         read -p "Ключ для ноды $i: " key
         create_node $i $profile "$key"
-        sudo ip addr add $(echo $BASE_IP | awk -F. -v i="$i" '{OFS="."; $4+=i; print}')/24 dev $NETWORK_INTERFACE
     done
 }
 
