@@ -18,7 +18,7 @@ declare -A USED_KEYS=()
 show_menu() {
     clear
     echo -ne "${ORANGE}"
-    curl -sSf $LOGO_URL 2>/dev/null || echo "=== TITAN NODE MANAGER v8.2 ==="
+    curl -sSf $LOGO_URL 2>/dev/null || echo "=== TITAN NODE MANAGER v8.4 ==="
     echo -e "\n1) Установить компоненты"
     echo "2) Создать ноды"
     echo "3) Проверить статус"
@@ -31,8 +31,8 @@ generate_realistic_profile() {
     # CPU: 8-32 ядер (кратно 4)
     local cpu_cores=$(( 4 * (2 + RANDOM % 7) ))  # 8,12,16...28
     
-    # RAM: 64-512GB (кратно 32)
-    local ram_gb=$(( 32 * (2 + RANDOM % 15) ))   # 64,96,128...512
+    # RAM: 32-512GB (кратно 32)
+    local ram_gb=$(( 32 * (1 + RANDOM % 16) ))   # 32,64,96...512
     
     # SSD: 500-3000GB (кратно 500)
     local ssd_gb=$(( 500 * (1 + RANDOM % 6) ))   # 500,1000...3000
@@ -131,6 +131,10 @@ setup_nodes() {
             fi
         done
     done
+
+    echo -e "\n${GREEN}Все ноды успешно созданы!${NC}"
+    read -p $'\nНажмите любую клавишу чтобы вернуться в меню...' -n1 -s
+    clear
 }
 
 check_nodes() {
