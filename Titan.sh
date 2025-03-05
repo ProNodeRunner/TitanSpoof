@@ -16,7 +16,7 @@ NETWORK_INTERFACE=$(ip route | grep default | awk '{print $5}' | head -n1)
 show_menu() {
     clear
     echo -ne "${ORANGE}"
-    curl -sSf $LOGO_URL 2>/dev/null || echo "=== TITAN NODE MANAGER v7.1 ==="
+    curl -sSf $LOGO_URL 2>/dev/null || echo "=== TITAN NODE MANAGER v8.0 ==="
     echo -e "\n1) Установить компоненты"
     echo "2) Создать ноды"
     echo "3) Проверить статус"
@@ -40,17 +40,16 @@ install_dependencies() {
     echo -e "${ORANGE}[*] Инициализация системы...${NC}"
     export DEBIAN_FRONTEND=noninteractive
 
-    # Удаление старых версий
-    echo -e "${ORANGE}[*] Удаление старых пакетов...${NC}"
-    sudo apt-get remove -y docker docker-engine docker.io containerd runc 2>/dev/null
-    sudo apt-get purge -y docker-ce docker-ce-cli 2>/dev/null
+    # Полная очистка перед установкой
+    echo -e "${ORANGE}[*] Подготовка окружения...${NC}"
+    sudo rm -f /etc/apt/sources.list.d/docker.list 2>/dev/null
+    sudo rm -f /usr/share/keyrings/docker-archive-keyring.gpg 2>/dev/null
 
-    # Обновление системы
-    echo -e "${ORANGE}[*] Обновление пакетов...${NC}"
-    sudo apt-get update -y
-    sudo apt-get upgrade -y
+    # Установка зависимостей
+    echo -e "${ORANGE}[*] Обновление системы...${NC}"
+    sudo apt-get update -yq
+    sudo apt-get upgrade -yq
 
-    # Установка базовых зависимостей
     echo -e "${ORANGE}[*] Установка компонентов...${NC}"
     sudo apt-get install -yq \
         apt-transport-https \
@@ -64,21 +63,25 @@ install_dependencies() {
         net-tools
 
     # Добавление репозитория Docker
-    echo -e "${ORANGE}[*] Настройка репозитория...${NC}"
-    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+    echo -e "${ORANGE}[*] Настройка репозитория Docker...${NC}"
+    if [ ! -f /usr/share/keyrings/docker-archive-keyring.gpg ]; then
+        curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --batch --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+    fi
+    if [ ! -f /etc/apt/sources.list.d/docker.list ]; then
+        echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+    fi
 
     # Установка Docker
     echo -e "${ORANGE}[*] Установка Docker...${NC}"
-    sudo apt-get update -y
+    sudo apt-get update -yq
     sudo apt-get install -yq docker-ce docker-ce-cli containerd.io
 
     # Настройка Docker
-    echo -e "${ORANGE}[*] Настройка окружения...${NC}"
+    echo -e "${ORANGE}[*] Настройка сервисов...${NC}"
     sudo systemctl enable --now docker
     sudo usermod -aG docker $USER
 
-    echo -e "${GREEN}[✓] Система готова! Перезапустите терминал для применения изменений групп.${NC}"
+    echo -e "${GREEN}[✓] Система готова! Перезапустите терминал.${NC}"
 }
 
 create_node() {
@@ -143,81 +146,39 @@ cleanup() {
     echo -e "${ORANGE}\n[*] Начинаем очистку системы...${NC}"
     sleep 1
 
-    # Проверка активности Docker
-    if systemctl is-active docker &>/dev/null; then
-        # Контейнеры
-        echo -e "${ORANGE}[*] Поиск контейнеров...${NC}"
-        containers=$(docker ps -aq --filter "name=titan_node" 2>/dev/null)
-        
-        if [ -n "$containers" ]; then
-            echo -e "${ORANGE}[*] Остановка контейнеров...${NC}"
-            docker stop $containers 2>/dev/null || true
-            sleep 3
-            
-            echo -e "${ORANGE}[*] Удаление контейнеров...${NC}"
-            docker rm $containers 2>/dev/null || true
-            sleep 1
-        else
-            echo -e "${GREEN}[✓] Активные контейнеры не найдены${NC}"
-        fi
+    # Остановка и удаление контейнеров
+    echo -e "${ORANGE}[*] Удаление контейнеров...${NC}"
+    docker ps -aq --filter "name=titan_node" 2>/dev/null | xargs -r docker rm -f 2>/dev/null
 
-        # Тома данных
-        echo -e "${ORANGE}[*] Поиск томов...${NC}"
-        volumes=$(docker volume ls -q --filter "name=titan_data" 2>/dev/null)
-        
-        if [ -n "$volumes" ]; then
-            echo -e "${ORANGE}[*] Удаление томов...${NC}"
-            docker volume rm $volumes 2>/dev/null || true
-            sleep 2
-        else
-            echo -e "${GREEN}[✓] Тома данных не найдены${NC}"
-        fi
-    else
-        echo -e "${GREEN}[✓] Docker не активен, пропускаем удаление контейнеров/томов${NC}"
-    fi
+    # Удаление томов
+    echo -e "${ORANGE}[*] Удаление томов...${NC}"
+    docker volume ls -q --filter "name=titan_data" 2>/dev/null | xargs -r docker volume rm 2>/dev/null
 
-    # Сеть
+    # Удаление Docker
+    echo -e "${ORANGE}[*] Удаление Docker...${NC}"
+    sudo apt-get purge -yq docker-ce docker-ce-cli containerd.io 2>/dev/null
+    sudo apt-get autoremove -yq 2>/dev/null
+    sudo rm -rf /var/lib/docker /etc/docker
+    sudo rm -f /etc/apt/sources.list.d/docker.list
+    sudo rm -f /usr/share/keyrings/docker-archive-keyring.gpg
+
+    # Восстановление сети
     echo -e "${ORANGE}[*] Восстановление сети...${NC}"
     for ip in $(seq 1 50); do
         node_ip=$(echo "$BASE_IP" | awk -F. -v i="$ip" '{OFS="."; $4+=i; print}')
-        sudo ip addr del $node_ip/24 dev $NETWORK_INTERFACE 2>/dev/null || true
+        sudo ip addr del $node_ip/24 dev $NETWORK_INTERFACE 2>/dev/null
     done
-    sleep 1
 
-    # Сервис
-    echo -e "${ORANGE}[*] Проверка сервиса...${NC}"
-    if systemctl is-enabled titan-node.service &>/dev/null; then
-        echo -e "${ORANGE}[*] Отключение сервиса...${NC}"
-        sudo systemctl stop titan-node.service 2>/dev/null || true
-        sudo systemctl disable titan-node.service 2>/dev/null || true
-        sudo rm -f /etc/systemd/system/titan-node.service 2>/dev/null || true
-        sudo systemctl daemon-reload 2>/dev/null || true
-        sleep 2
-    else
-        echo -e "${GREEN}[✓] Сервис не активен${NC}"
-    fi
+    # Удаление сервиса
+    echo -e "${ORANGE}[*] Удаление сервиса...${NC}"
+    sudo systemctl stop titan-node.service 2>/dev/null
+    sudo systemctl disable titan-node.service 2>/dev/null
+    sudo rm -f /etc/systemd/system/titan-node.service
+    sudo systemctl daemon-reload 2>/dev/null
 
-    # Проверка
-    echo -e "${ORANGE}[*] Финальная проверка...${NC}"
-    containers=0
-    volumes=0
-    
-    if systemctl is-active docker &>/dev/null; then
-        containers=$(docker ps -aq --filter "name=titan_node" 2>/dev/null | wc -l)
-        volumes=$(docker volume ls -q --filter "name=titan_data" 2>/dev/null | wc -l)
-    fi
-    
-    if [ $containers -eq 0 ] && [ $volumes -eq 0 ]; then
-        echo -e "${GREEN}\n[✓] ВСЕ КОМПОНЕНТЫ УДАЛЕНЫ!${NC}"
-    else
-        echo -e "${RED}\n[✗] Обнаружены остатки:"
-        [ $containers -gt 0 ] && docker ps -a --filter "name=titan_node" 2>/dev/null || true
-        [ $volumes -gt 0 ] && docker volume ls --filter "name=titan_data" 2>/dev/null || true
-        echo -e "${NC}"
-    fi
-
-    echo -e "\n${ORANGE}[*] Возврат в меню через 5 секунд...${NC}"
-    sleep 5
+    # Финализация
+    echo -e "${GREEN}\n[✓] ВСЕ КОМПОНЕНТЫ УДАЛЕНЫ!${NC}"
+    sleep 3
 }
 
 case $1 in
