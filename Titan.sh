@@ -16,7 +16,7 @@ NETWORK_INTERFACE=$(ip route | grep default | awk '{print $5}' | head -n1)
 show_menu() {
     clear
     echo -ne "${ORANGE}"
-    curl -sSf $LOGO_URL 2>/dev/null || echo "=== TITAN NODE MANAGER v6.2 ==="
+    curl -sSf $LOGO_URL 2>/dev/null || echo "=== TITAN NODE MANAGER v6.3 ==="
     echo -e "\n1) Установить компоненты"
     echo "2) Создать ноды"
     echo "3) Проверить статус"
@@ -134,39 +134,44 @@ cleanup() {
     echo -e "${ORANGE}\n[*] Начинаем очистку системы...${NC}"
     sleep 1
 
-    # Контейнеры
-    echo -e "${ORANGE}[*] Поиск контейнеров...${NC}"
-    containers=$(docker ps -aq --filter "name=titan_node" 2>/dev/null)
-    
-    if [ -n "$containers" ]; then
-        echo -e "${ORANGE}[*] Остановка контейнеров...${NC}"
-        docker stop $containers 2>/dev/null
-        sleep 3
+    # Проверка активности Docker
+    if ! systemctl is-active docker &>/dev/null; then
+        echo -e "${GREEN}[✓] Docker не активен, пропускаем удаление контейнеров/томов${NC}"
+    else
+        # Контейнеры
+        echo -e "${ORANGE}[*] Поиск контейнеров...${NC}"
+        containers=$(docker ps -aq --filter "name=titan_node" 2>/dev/null)
         
-        echo -e "${ORANGE}[*] Удаление контейнеров...${NC}"
-        docker rm $containers 2>/dev/null
-        sleep 1
-    else
-        echo -e "${GREEN}[✓] Активные контейнеры не найдены${NC}"
-    fi
+        if [ -n "$containers" ]; then
+            echo -e "${ORANGE}[*] Остановка контейнеров...${NC}"
+            docker stop $containers 2>/dev/null || true
+            sleep 3
+            
+            echo -e "${ORANGE}[*] Удаление контейнеров...${NC}"
+            docker rm $containers 2>/dev/null || true
+            sleep 1
+        else
+            echo -e "${GREEN}[✓] Активные контейнеры не найдены${NC}"
+        fi
 
-    # Тома данных
-    echo -e "${ORANGE}[*] Поиск томов...${NC}"
-    volumes=$(docker volume ls -q --filter "name=titan_data" 2>/dev/null)
-    
-    if [ -n "$volumes" ]; then
-        echo -e "${ORANGE}[*] Удаление томов...${NC}"
-        docker volume rm $volumes 2>/dev/null
-        sleep 2
-    else
-        echo -e "${GREEN}[✓] Тома данных не найдены${NC}"
+        # Тома данных
+        echo -e "${ORANGE}[*] Поиск томов...${NC}"
+        volumes=$(docker volume ls -q --filter "name=titan_data" 2>/dev/null)
+        
+        if [ -n "$volumes" ]; then
+            echo -e "${ORANGE}[*] Удаление томов...${NC}"
+            docker volume rm $volumes 2>/dev/null || true
+            sleep 2
+        else
+            echo -e "${GREEN}[✓] Тома данных не найдены${NC}"
+        fi
     fi
 
     # Сеть
     echo -e "${ORANGE}[*] Восстановление сети...${NC}"
     for ip in $(seq 1 50); do
         node_ip=$(echo "$BASE_IP" | awk -F. -v i="$ip" '{OFS="."; $4+=i; print}')
-        sudo ip addr del $node_ip/24 dev $NETWORK_INTERFACE 2>/dev/null
+        sudo ip addr del $node_ip/24 dev $NETWORK_INTERFACE 2>/dev/null || true
     done
     sleep 1
 
@@ -174,10 +179,10 @@ cleanup() {
     echo -e "${ORANGE}[*] Проверка сервиса...${NC}"
     if systemctl is-enabled titan-node.service &>/dev/null; then
         echo -e "${ORANGE}[*] Отключение сервиса...${NC}"
-        sudo systemctl stop titan-node.service 2>/dev/null
-        sudo systemctl disable titan-node.service 2>/dev/null
-        sudo rm -f /etc/systemd/system/titan-node.service 2>/dev/null
-        sudo systemctl daemon-reload 2>/dev/null
+        sudo systemctl stop titan-node.service 2>/dev/null || true
+        sudo systemctl disable titan-node.service 2>/dev/null || true
+        sudo rm -f /etc/systemd/system/titan-node.service 2>/dev/null || true
+        sudo systemctl daemon-reload 2>/dev/null || true
         sleep 2
     else
         echo -e "${GREEN}[✓] Сервис не активен${NC}"
@@ -185,19 +190,23 @@ cleanup() {
 
     # Проверка
     echo -e "${ORANGE}[*] Финальная проверка...${NC}"
-    containers=$(docker ps -aq --filter "name=titan_node" | wc -l)
-    volumes=$(docker volume ls -q --filter "name=titan_data" | wc -l)
+    containers=0
+    volumes=0
+    
+    if systemctl is-active docker &>/dev/null; then
+        containers=$(docker ps -aq --filter "name=titan_node" 2>/dev/null | wc -l)
+        volumes=$(docker volume ls -q --filter "name=titan_data" 2>/dev/null | wc -l)
+    fi
     
     if [ $containers -eq 0 ] && [ $volumes -eq 0 ]; then
         echo -e "${GREEN}\n[✓] ВСЕ КОМПОНЕНТЫ УДАЛЕНЫ!${NC}"
     else
         echo -e "${RED}\n[✗] Обнаружены остатки:"
-        [ $containers -gt 0 ] && docker ps -a --filter "name=titan_node"
-        [ $volumes -gt 0 ] && docker volume ls --filter "name=titan_data"
+        [ $containers -gt 0 ] && docker ps -a --filter "name=titan_node" 2>/dev/null || true
+        [ $volumes -gt 0 ] && docker volume ls --filter "name=titan_data" 2>/dev/null || true
         echo -e "${NC}"
     fi
 
-    # Фиксированная пауза перед возвратом
     echo -e "\n${ORANGE}[*] Возврат в меню через 5 секунд...${NC}"
     sleep 5
 }
