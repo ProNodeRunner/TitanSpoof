@@ -16,12 +16,17 @@ declare -A USED_PORTS=()
 show_menu() {
     clear
     echo -ne "${ORANGE}"
-    curl -sSf "$LOGO_URL" 2>/dev/null || echo "=== TITAN NODE MANAGER v15 ==="
+    curl -sSf "$LOGO_URL" 2>/dev/null || echo "=== TITAN NODE MANAGER v17 ==="
     echo -e "\n1) Установить компоненты\n2) Создать ноды\n3) Проверить статус\n4) Показать логи ноды\n5) Перезапустить все ноды\n6) Полная очистка\n7) Выход"
     echo -ne "${NC}"
 }
 
 generate_random_port() {
+    if [[ $1 -eq 1 ]]; then
+        echo "1234"
+        return
+    fi
+
     while true; do
         port=$(shuf -i 30000-40000 -n 1)
         if [[ ! -v USED_PORTS[$port] ]] && ! ss -uln | grep -q ":${port} "; then
@@ -40,7 +45,6 @@ install_dependencies() {
     echo -e "${ORANGE}[*] Инициализация системы...${NC}"
     export DEBIAN_FRONTEND=noninteractive
 
-    # Предустановка ответов для iptables-persistent
     sudo bash -c "echo 'iptables-persistent iptables-persistent/autosave_v4 boolean false' | debconf-set-selections"
     sudo bash -c "echo 'iptables-persistent iptables-persistent/autosave_v6 boolean false' | debconf-set-selections"
 
@@ -59,6 +63,7 @@ install_dependencies() {
         netcat \
         iptables-persistent
 
+    sudo ufw allow 1234/udp
     sudo ufw allow 30000:40000/udp
     sudo ufw reload
 
@@ -79,7 +84,7 @@ install_dependencies() {
 create_node() {
     local node_num=$1 identity_code=$2
     IFS=',' read -r cpu ram ssd <<< "$(generate_realistic_profile)"
-    local port=$(generate_random_port)
+    local port=$(generate_random_port $node_num)
     local volume="titan_data_$node_num"
     local node_ip="${BASE_IP%.*}.$(( ${BASE_IP##*.} + node_num ))"
 
@@ -103,8 +108,7 @@ create_node() {
         --network host \
         -v "$volume:/root/.titanedge" \
         nezha123/titan-edge:latest \
-        --external-ip="$node_ip" \
-        --port="$port"; then
+        --bind-address="$node_ip:$port"; then
         echo -e "${RED}[✗] Ошибка запуска контейнера${NC}"
         return 1
     fi
