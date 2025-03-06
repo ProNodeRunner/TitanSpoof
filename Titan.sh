@@ -17,7 +17,7 @@ declare -A USED_PORTS=()
 show_menu() {
     clear
     echo -ne "${ORANGE}"
-    curl -sSf "$LOGO_URL" 2>/dev/null || echo "=== TITAN NODE MANAGER v13 ==="
+    curl -sSf "$LOGO_URL" 2>/dev/null || echo "=== TITAN NODE MANAGER v14 ==="
     echo -e "\n1) Установить компоненты\n2) Создать ноды\n3) Проверить статус\n4) Показать логи ноды\n5) Перезапустить все ноды\n6) Полная очистка\n7) Выход"
     echo -ne "${NC}"
 }
@@ -79,43 +79,61 @@ create_node() {
     local volume="titan_data_$node_num"
     local node_ip="${BASE_IP%.*}.$(( ${BASE_IP##*.} + node_num ))"
 
+    # Принудительная очистка
     docker rm -f "titan_node_$node_num" 2>/dev/null
-    docker volume rm "$volume" 2>/dev/null
+    docker volume rm -f "$volume" 2>/dev/null
+    sudo ip addr del "$node_ip/24" dev "$NETWORK_INTERFACE" 2>/dev/null
 
+    # Создание тома
     if ! docker volume create "$volume" >/dev/null; then
-        echo -e "${RED}[✗] Ошибка создания тома $volume${NC}"
+        echo -e "${RED}[✗] Ошибка создания тома${NC}"
         return 1
     fi
 
-    if ! echo "$identity_code" | docker run -i --rm -v "$volume:/data" busybox sh -c "cat > /data/identity.key"; then
+    # Запись ключа
+    if ! docker run --rm -v "$volume:/data" alpine sh -c "echo '$identity_code' > /data/identity.key"; then
         echo -e "${RED}[✗] Ошибка записи ключа${NC}"
         return 1
     fi
 
+    # Запуск контейнера
     if ! screen -dmS "node_$node_num" docker run -d \
         --name "titan_node_$node_num" \
         --restart unless-stopped \
         --network host \
-        -p ${port}:1234/udp \
         -v "$volume:/root/.titanedge" \
         nezha123/titan-edge:latest; then
         echo -e "${RED}[✗] Ошибка запуска контейнера${NC}"
         return 1
     fi
 
+    # Настройка сети
     sudo ip addr add "${node_ip}/24" dev "$NETWORK_INTERFACE" 2>/dev/null
-    
-    echo -e "${ORANGE}[*] Ожидаем инициализацию ноды (15 сек)...${NC}"
-    sleep 15
 
-    if ! docker exec "titan_node_$node_num" sh -c "curl -sSf https://api.titan.network/health >/dev/null && nslookup google.com >/dev/null"; then
-        echo -e "${RED}[✗] Нода $node_num: Проблемы с сетью${NC}"
+    # Расширенная проверка
+    echo -e "${ORANGE}[*] Инициализация ноды (45 сек)...${NC}"
+    for i in {1..15}; do
+        if docker ps | grep -q "titan_node_$node_num"; then
+            break
+        fi
+        sleep 3
+    done
+
+    if ! docker ps | grep -q "titan_node_$node_num"; then
+        echo -e "${RED}[✗] Контейнер не запустился${NC}"
+        docker logs "titan_node_$node_num" 2>/dev/null || echo "Логи недоступны"
+        return 1
+    fi
+
+    # Проверка подключения
+    if ! docker exec "titan_node_$node_num" timeout 20 sh -c "while ! curl -sSf https://api.titan.network/health >/dev/null; do sleep 2; done"; then
+        echo -e "${RED}[✗] Ошибка подключения к сети${NC}"
         docker logs --tail 20 "titan_node_$node_num"
         return 1
     fi
 
-    printf "${GREEN}[✓] Нода %02d | %2d ядер | %4dGB RAM | %4dGB SSD | Порт: %5d | IP: %s${NC}\n" \
-        "$node_num" "$cpu" "$ram" "$ssd" "$port" "$node_ip"
+    printf "${GREEN}[✓] Нода %02d | %2d ядер | %4dGB RAM | %4dGB SSD | IP: %s${NC}\n" \
+        "$node_num" "$cpu" "$ram" "$ssd" "$node_ip"
 }
 
 setup_nodes() {
