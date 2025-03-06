@@ -28,7 +28,7 @@ generate_random_port() {
     fi
 
     while true; do
-        port=$(shuf -i 30000-40000 -n1)
+        port=$(shuf -i 30000-40000 -n 1)
         [[ ! -v USED_PORTS[$port] ]] && ! ss -uln | grep -q ":${port} " && break
     done
     USED_PORTS[$port]=1
@@ -265,19 +265,16 @@ case $1 in
         while true; do
             show_menu
             read -p "Выбор: " choice
-            
-            # Проверка только для пункта 2
-            if [[ "$choice" == "2" ]]; then
-                if ! command -v docker &>/dev/null || [ ! -f "/usr/bin/jq" ]; then
-                    echo -e "\n${RED}ОШИБКА: Сначала установите компоненты (пункт 1)!${NC}"
-                    sleep 2
-                    continue
-                fi
-            fi
-
             case $choice in
                 1) install_dependencies ;;
-                2) setup_nodes ;;
+                2) 
+                    if ! command -v docker &>/dev/null || [ ! -f "/usr/bin/jq" ]; then
+                        echo -e "\n${RED}ОШИБКА: Сначала установите компоненты (пункт 1)!${NC}"
+                        sleep 2
+                        continue
+                    fi
+                    setup_nodes 
+                    ;;
                 3) check_nodes ;;
                 4) show_logs ;;
                 5) restart_nodes ;;
