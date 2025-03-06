@@ -16,7 +16,7 @@ declare -A USED_PORTS=()
 show_menu() {
     clear
     echo -ne "${ORANGE}"
-    curl -sSf "$LOGO_URL" 2>/dev/null || echo "=== TITAN NODE MANAGER v14 ==="
+    curl -sSf "$LOGO_URL" 2>/dev/null || echo "=== TITAN NODE MANAGER v15 ==="
     echo -e "\n1) Установить компоненты\n2) Создать ноды\n3) Проверить статус\n4) Показать логи ноды\n5) Перезапустить все ноды\n6) Полная очистка\n7) Выход"
     echo -ne "${NC}"
 }
@@ -39,6 +39,10 @@ generate_realistic_profile() {
 install_dependencies() {
     echo -e "${ORANGE}[*] Инициализация системы...${NC}"
     export DEBIAN_FRONTEND=noninteractive
+
+    # Предустановка ответов для iptables-persistent
+    sudo bash -c "echo 'iptables-persistent iptables-persistent/autosave_v4 boolean false' | debconf-set-selections"
+    sudo bash -c "echo 'iptables-persistent iptables-persistent/autosave_v6 boolean false' | debconf-set-selections"
 
     sudo apt-get update -yq && sudo apt-get upgrade -yq
     sudo apt-get install -yq \
