@@ -18,6 +18,12 @@ show_menu() {
     echo -ne "${ORANGE}"
     curl -sSf "$LOGO_URL" 2>/dev/null || echo "=== TITAN NODE MANAGER v22 ==="
     echo -e "\n1) Установить компоненты\n2) Создать ноды\n3) Проверить статус\n4) Показать логи\n5) Перезапустить\n6) Очистка\n7) Выход"
+    
+    # Проверка установленных компонентов
+    if ! command -v docker &>/dev/null || [ ! -f "/usr/bin/jq" ]; then
+        echo -e "\n${RED}ВНИМАНИЕ: Компоненты не установлены! Сначала выполните пункт 1${NC}"
+    fi
+    
     echo -ne "${NC}"
 }
 
@@ -117,6 +123,13 @@ create_node() {
 }
 
 setup_nodes() {
+    # Проверка зависимостей
+    if ! command -v docker &>/dev/null || [ ! -f "/usr/bin/jq" ]; then
+        echo -e "${RED}ОШИБКА: Сначала установите компоненты (пункт 1)!${NC}"
+        sleep 2
+        return 1
+    fi
+
     declare -A USED_KEYS=()
     
     while true; do
