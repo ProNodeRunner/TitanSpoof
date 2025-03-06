@@ -12,11 +12,6 @@ NETWORK_INTERFACE=$(ip route | grep default | awk '{print $5}' | head -n1)
 
 declare -A USED_KEYS=()
 declare -A USED_PORTS=()
-DEPENDENCIES_INSTALLED=false
-
-check_dependencies() {
-    command -v docker &>/dev/null && [ -f "/usr/bin/jq" ] && DEPENDENCIES_INSTALLED=true || DEPENDENCIES_INSTALLED=false
-}
 
 show_menu() {
     clear
@@ -52,40 +47,27 @@ install_dependencies() {
     echo -e "${ORANGE}[*] Инициализация системы...${NC}"
     export DEBIAN_FRONTEND=noninteractive
 
-    # Установка зависимостей
-    sudo apt-get update -y && sudo apt-get upgrade -y
-    sudo apt-get install -y \
-        apt-transport-https \
-        ca-certificates \
-        curl \
-        gnupg \
-        lsb-release \
-        jq \
-        screen \
-        cgroup-tools \
-        net-tools \
-        ccze \
-        netcat \
-        iptables-persistent
+    sudo bash -c "echo 'iptables-persistent iptables-persistent/autosave_v4 boolean false' | debconf-set-selections"
+    sudo bash -c "echo 'iptables-persistent iptables-persistent/autosave_v6 boolean false' | debconf-set-selections"
 
-    # Настройка фаервола
+    sudo apt-get update -yq && sudo apt-get upgrade -yq
+    sudo apt-get install -yq \
+        apt-transport-https ca-certificates curl gnupg lsb-release \
+        jq screen cgroup-tools net-tools ccze netcat iptables-persistent
+
     sudo ufw allow 1234/udp
     sudo ufw allow 30000:40000/udp
-    sudo ufw --force enable
     sudo ufw reload
 
-    # Установка Docker
-    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --batch --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
     
-    sudo apt-get update -y
-    sudo apt-get install -y docker-ce docker-ce-cli containerd.io
-    sudo systemctl enable docker
-    sudo systemctl start docker
-    sudo usermod -aG docker $USER
+    sudo apt-get update -yq && sudo apt-get install -yq docker-ce docker-ce-cli containerd.io
+    sudo systemctl enable --now docker
+    sudo usermod -aG docker "$USER"
 
-    echo -e "${GREEN}[✓] Все компоненты успешно установлены!${NC}"
-    sleep 2
+    echo -e "${GREEN}[✓] Система готова!${NC}"
+    sleep 1
 }
 
 create_node() {
@@ -225,19 +207,35 @@ restart_nodes() {
 cleanup() {
     echo -e "${ORANGE}\n[!] ПОЛНАЯ ОЧИСТКА [!]${NC}"
     
+    # 1. Контейнеры
+    echo -e "${ORANGE}[1/6] Удаление контейнеров...${NC}"
     docker ps -aq --filter "name=titan_node" | xargs -r docker rm -f
+
+    # 2. Тома
+    echo -e "${ORANGE}[2/6] Удаление томов...${NC}"
     docker volume ls -q --filter "name=titan_data" | xargs -r docker volume rm
-    sudo apt-get purge -y docker-ce docker-ce-cli containerd.io
-    sudo apt-get autoremove -y
+
+    # 3. Docker
+    echo -e "${ORANGE}[3/6] Удаление Docker...${NC}"
+    sudo apt-get purge -yq docker-ce docker-ce-cli containerd.io
+    sudo apt-get autoremove -yq
     sudo rm -rf /var/lib/docker /etc/docker
+
+    # 4. Screen
+    echo -e "${ORANGE}[4/6] Очистка screen...${NC}"
     screen -ls | grep "node_" | awk -F. '{print $1}' | xargs -r -I{} screen -X -S {} quit
 
+    # 5. Сеть
+    echo -e "${ORANGE}[5/6] Восстановление сети...${NC}"
     for i in {1..50}; do
         node_ip="${BASE_IP%.*}.$(( ${BASE_IP##*.} + i ))"
         sudo ip addr del "$node_ip/24" dev "$NETWORK_INTERFACE" 2>/dev/null
     done
     sudo iptables -t nat -F && sudo iptables -t mangle -F
     sudo netfilter-persistent save >/dev/null 2>&1
+
+    # 6. Кэш
+    echo -e "${ORANGE}[6/6] Очистка кэша...${NC}"
     sudo rm -rf /tmp/fake_* ~/.titanedge /var/cache/apt/archives/*.deb
 
     echo -e "\n${GREEN}[✓] Все следы удалены! Перезагрузите сервер.${NC}"
@@ -268,9 +266,9 @@ case $1 in
             show_menu
             read -p "Выбор: " choice
             
+            # Проверка только для пункта 2
             if [[ "$choice" == "2" ]]; then
-                check_dependencies
-                if ! $DEPENDENCIES_INSTALLED; then
+                if ! command -v docker &>/dev/null || [ ! -f "/usr/bin/jq" ]; then
                     echo -e "\n${RED}ОШИБКА: Сначала установите компоненты (пункт 1)!${NC}"
                     sleep 2
                     continue
