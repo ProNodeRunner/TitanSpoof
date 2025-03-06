@@ -28,7 +28,7 @@ generate_random_port() {
     fi
 
     while true; do
-        port=$(shuf -i 30000-40000 -n 1)
+        port=$(shuf -i 30000-40000 -n1)
         [[ ! -v USED_PORTS[$port] ]] && ! ss -uln | grep -q ":${port} " && break
     done
     USED_PORTS[$port]=1
@@ -36,7 +36,10 @@ generate_random_port() {
 }
 
 generate_realistic_profile() {
-    echo "$((2 + RANDOM%4)),$((4 + RANDOM%8)),$((50 + RANDOM%50))"
+    local cpu=$((8 + (RANDOM % 8) * 2))       # 8-24 ядра с шагом 2
+    local ram=$((32 + (RANDOM % 16) * 32))    # 32-512GB с шагом 32
+    local ssd=$((512 + (RANDOM % 20) * 512))  # 512-10240GB с шагом 512
+    echo "$cpu,$ram,$ssd"
 }
 
 generate_fake_mac() {
@@ -89,7 +92,7 @@ create_node() {
         return 1
     }
 
-    if ! screen -dmS "node_$node_num" docker run -d \
+    if ! docker run -d \
         --name "titan_node_$node_num" \
         --restart unless-stopped \
         --cpus "$cpu" \
@@ -109,11 +112,14 @@ create_node() {
     sudo iptables -t nat -A PREROUTING -i $NETWORK_INTERFACE -p udp --dport $port -j DNAT --to-destination $node_ip:$port
     sudo netfilter-persistent save >/dev/null 2>&1
 
-    echo -e "${ORANGE}[*] Инициализация ноды (2 мин)...${NC}"
-    sleep 120
+    echo "node_$node_num|$mac|$port|$node_ip|$(date +%s)" >> $CONFIG_FILE
 
-    printf "${GREEN}[✓] Нода %02d | IP: %s | Порт: %5d | Ресурсы: %d ядер, %dGB RAM, %dGB SSD | MAC: %s${NC}\n" \
-        "$node_num" "$node_ip" "$port" "$cpu" "$ram_gb" "$ssd_gb" "$mac"
+    echo -ne "${ORANGE}Инициализация ноды $node_num..."
+    while ! docker logs "titan_node_$node_num" 2>&1 | grep -q "Ready"; do
+        sleep 5
+        echo -n "."
+    done
+    echo -e "${GREEN} OK!${NC}"
 }
 
 setup_nodes() {
@@ -149,27 +155,23 @@ setup_nodes() {
     clear
 }
 
-check_nodes() {
+check_status() {
     clear
-    echo -e "${ORANGE}ТЕКУЩИЙ СТАТУС:${NC}"
-    docker ps -a --filter "name=titan_node" --format '{{.Names}} {{.Status}} {{.Ports}}' | \
-    awk '{
-        status_color = ($2 ~ /Up/) ? "\033[32m" : "\033[31m";
-        printf "%-15s %s%-12s\033[0m %s\n", $1, status_color, $2, $3
-    }'
-
-    echo -e "\n${ORANGE}СИНХРОНИЗАЦИЯ:${NC}"
-    docker ps --filter "name=titan_node" --format "{{.Names}}" | xargs -I{} sh -c \
-    'echo -n "{}: "; docker exec {} titan-edge info sync 2>/dev/null | grep "Progress" || echo "OFFLINE"'
-
-    echo -e "\n${ORANGE}ЗАДАЧИ:${NC}"
-    docker ps --filter "name=titan_node" --format "{{.Names}}" | xargs -I{} sh -c \
-    'echo -n "{}: "; docker exec {} titan-edge info tasks 2>/dev/null | grep "Total tasks"'
-
-    echo -e "\n${ORANGE}ТРАФИК:${NC}"
-    docker ps --filter "name=titan_node" --format "{{.Names}}" | xargs -I{} sh -c \
-    'echo -n "{}: "; docker exec {} titan-edge info bandwidth 2>/dev/null | grep "used"'
-
+    printf "${ORANGE}%-20s | %-17s | %-15s | %-15s | %s${NC}\n" "Имя" "MAC" "Порт" "IP" "Статус"
+    
+    while IFS='|' read -r name mac port ip timestamp; do
+        if docker ps | grep -q "$name"; then
+            status="${GREEN}🟢 ALIVE${NC}"
+        else
+            status="${RED}🔴 DEAD${NC}"
+        fi
+        
+        printf "%-20s | %-17s | %-15s | %-15s | %b\n" "$name" "$mac" "$port" "$ip" "$status"
+    done < $CONFIG_FILE
+    
+    echo -e "\n${ORANGE}РЕСУРСЫ:${NC}"
+    docker stats --no-stream --format "{{.Name}}: {{.CPUPerc}} CPU / {{.MemUsage}}" | grep "titan_node"
+    
     read -p $'\nНажмите любую клавишу...' -n1 -s
     clear
 }
@@ -192,11 +194,10 @@ restart_nodes() {
     docker ps -aq --filter "name=titan_node" | xargs -r docker rm -f
     
     if [ -f "$CONFIG_FILE" ]; then
-        source "$CONFIG_FILE"
-        for key in "${!USED_KEYS[@]}"; do
-            node_num=${key##*_}
+        while IFS='|' read -r name mac port ip timestamp; do
+            node_num=${name//titan_node_/}
             create_node "$node_num" "${USED_KEYS[$key]}"
-        done
+        done < $CONFIG_FILE
         echo -e "${GREEN}[✓] Ноды перезапущены!${NC}"
     else
         echo -e "${RED}Конфигурация отсутствует!${NC}"
@@ -275,7 +276,7 @@ case $1 in
                     fi
                     setup_nodes 
                     ;;
-                3) check_nodes ;;
+                3) check_status ;;
                 4) show_logs ;;
                 5) restart_nodes ;;
                 6) cleanup ;;
