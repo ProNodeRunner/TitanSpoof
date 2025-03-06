@@ -9,7 +9,6 @@ GREEN='\033[0;32m'
 RED='\033[0;31m'
 NC='\033[0m'
 
-# Автоматическое определение интерфейса
 NETWORK_INTERFACE=$(ip route | grep default | awk '{print $5}' | head -n1)
 
 declare -A USED_KEYS=()
@@ -18,7 +17,7 @@ declare -A USED_PORTS=()
 show_menu() {
     clear
     echo -ne "${ORANGE}"
-    curl -sSf "$LOGO_URL" 2>/dev/null || echo "=== TITAN NODE MANAGER v12.2 ==="
+    curl -sSf "$LOGO_URL" 2>/dev/null || echo "=== TITAN NODE MANAGER v13 ==="
     echo -e "\n1) Установить компоненты\n2) Создать ноды\n3) Проверить статус\n4) Показать логи ноды\n5) Перезапустить все ноды\n6) Полная очистка\n7) Выход"
     echo -ne "${NC}"
 }
@@ -81,26 +80,37 @@ create_node() {
     local node_ip="${BASE_IP%.*}.$(( ${BASE_IP##*.} + node_num ))"
 
     docker rm -f "titan_node_$node_num" 2>/dev/null
+    docker volume rm "$volume" 2>/dev/null
 
-    if ! docker volume create "$volume" >/dev/null || \
-       ! echo "$identity_code" | docker run -i --rm -v "$volume:/data" alpine sh -c "cat > /data/identity.key"; then
-        echo -e "${RED}[✗] Ошибка создания ноды $node_num${NC}"
+    if ! docker volume create "$volume" >/dev/null; then
+        echo -e "${RED}[✗] Ошибка создания тома $volume${NC}"
         return 1
     fi
 
-    screen -dmS "node_$node_num" docker run -d \
+    if ! echo "$identity_code" | docker run -i --rm -v "$volume:/data" busybox sh -c "cat > /data/identity.key"; then
+        echo -e "${RED}[✗] Ошибка записи ключа${NC}"
+        return 1
+    fi
+
+    if ! screen -dmS "node_$node_num" docker run -d \
         --name "titan_node_$node_num" \
         --restart unless-stopped \
-        --network bridge \
+        --network host \
         -p ${port}:1234/udp \
         -v "$volume:/root/.titanedge" \
-        nezha123/titan-edge:latest
+        nezha123/titan-edge:latest; then
+        echo -e "${RED}[✗] Ошибка запуска контейнера${NC}"
+        return 1
+    fi
 
     sudo ip addr add "${node_ip}/24" dev "$NETWORK_INTERFACE" 2>/dev/null
-    sleep 5
+    
+    echo -e "${ORANGE}[*] Ожидаем инициализацию ноды (15 сек)...${NC}"
+    sleep 15
 
-    if ! docker exec "titan_node_$node_num" curl -sSf https://api.titan.network/health >/dev/null; then
-        echo -e "${RED}[✗] Нода $node_num: Нет интернет-доступа${NC}"
+    if ! docker exec "titan_node_$node_num" sh -c "curl -sSf https://api.titan.network/health >/dev/null && nslookup google.com >/dev/null"; then
+        echo -e "${RED}[✗] Нода $node_num: Проблемы с сетью${NC}"
+        docker logs --tail 20 "titan_node_$node_num"
         return 1
     fi
 
@@ -123,9 +133,13 @@ setup_nodes() {
             key_upper=${key^^}
             if [[ ${USED_KEYS[$key_upper]} ]]; then
                 echo -e "${RED}Ключ уже используется!${NC}"
-            elif [[ $key_upper =~ ^[A-F0-9]{8}-([A-F0-9]{4}-){3}[A-F0-9]{12}$ ]]; then
+            elif [[ $key_upper =~ ^[A-F0-9]{8}-[A-F0-9]{4}-4[A-F0-9]{3}-[89AB][A-F0-9]{3}-[A-F0-9]{12}$ ]]; then
                 USED_KEYS[$key_upper]=1
-                create_node "$i" "$key_upper" && break
+                if create_node "$i" "$key_upper"; then
+                    break
+                else
+                    echo -e "${RED}Повторите ввод ключа для ноды $i${NC}"
+                fi
             else
                 echo -e "${RED}Неверный формат! Пример: EFE14741-B359-4C34-9A36-BA7F88A574FC${NC}"
             fi
@@ -147,19 +161,20 @@ check_nodes() {
         value = $3;
         
         if ($2 == "Up") {
-            total_minutes = 0;
-            if (time_unit == "weeks") total_minutes = value * 10080;
-            if (time_unit == "days") total_minutes = value * 1440;
-            if (time_unit == "hours") total_minutes = value * 60;
-            if (time_unit == "minutes") total_minutes = value;
+            total_seconds = 0;
+            if (time_unit == "weeks") total_seconds = value * 604800;
+            if (time_unit == "days") total_seconds = value * 86400;
+            if (time_unit == "hours") total_seconds = value * 3600;
+            if (time_unit == "minutes") total_seconds = value * 60;
             
-            days = int(total_minutes / 1440);
-            hours = int((total_minutes % 1440) / 60);
-            minutes = int(total_minutes % 60);
+            days = int(total_seconds / 86400);
+            hours = int((total_seconds % 86400) / 3600);
+            minutes = int((total_seconds % 3600) / 60);
+            
             uptime = "";
             if (days > 0) uptime = sprintf("%dд ", days);
             if (hours > 0) uptime = uptime sprintf("%dч ", hours);
-            uptime = uptime sprintf("%dм", minutes);
+            if (minutes > 0) uptime = uptime sprintf("%dм", minutes);
         }
         else {
             uptime = "N/A";
@@ -168,11 +183,6 @@ check_nodes() {
         printf "%-15s %s%-12s\033[37m (up %-15s)\033[0m %s\n", 
                $1, status_color, $2, uptime, $5
     }'
-    
-    echo -e "\n${ORANGE}СЕТЕВЫЕ НАСТРОЙКИ:${NC}"
-    ip -br addr show "$NETWORK_INTERFACE" | awk '{print $1" "$3}'
-    echo -e "\n${ORANGE}АКТИВНЫЕ ПОРТЫ:${NC}"
-    docker ps --filter "name=titan_node" --format "{{.Names}}" | xargs -I{} docker port {} | grep udp
     
     echo -e "\n${ORANGE}СИНХРОНИЗАЦИЯ:${NC}"
     docker ps --filter "name=titan_node" --format "{{.Names}}" | xargs -I{} sh -c \
