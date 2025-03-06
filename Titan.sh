@@ -52,27 +52,40 @@ install_dependencies() {
     echo -e "${ORANGE}[*] Инициализация системы...${NC}"
     export DEBIAN_FRONTEND=noninteractive
 
-    sudo bash -c "echo 'iptables-persistent iptables-persistent/autosave_v4 boolean false' | debconf-set-selections"
-    sudo bash -c "echo 'iptables-persistent iptables-persistent/autosave_v6 boolean false' | debconf-set-selections"
+    # Установка зависимостей
+    sudo apt-get update -y && sudo apt-get upgrade -y
+    sudo apt-get install -y \
+        apt-transport-https \
+        ca-certificates \
+        curl \
+        gnupg \
+        lsb-release \
+        jq \
+        screen \
+        cgroup-tools \
+        net-tools \
+        ccze \
+        netcat \
+        iptables-persistent
 
-    sudo apt-get update -yq && sudo apt-get upgrade -yq
-    sudo apt-get install -yq \
-        apt-transport-https ca-certificates curl gnupg lsb-release \
-        jq screen cgroup-tools net-tools ccze netcat iptables-persistent
-
+    # Настройка фаервола
     sudo ufw allow 1234/udp
     sudo ufw allow 30000:40000/udp
+    sudo ufw --force enable
     sudo ufw reload
 
-    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --batch --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
+    # Установка Docker
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
     
-    sudo apt-get update -yq && sudo apt-get install -yq docker-ce docker-ce-cli containerd.io
-    sudo systemctl enable --now docker
-    sudo usermod -aG docker "$USER"
-    check_dependencies
-    echo -e "${GREEN}[✓] Система готова!${NC}"
-    sleep 1
+    sudo apt-get update -y
+    sudo apt-get install -y docker-ce docker-ce-cli containerd.io
+    sudo systemctl enable docker
+    sudo systemctl start docker
+    sudo usermod -aG docker $USER
+
+    echo -e "${GREEN}[✓] Все компоненты успешно установлены!${NC}"
+    sleep 2
 }
 
 create_node() {
@@ -214,8 +227,8 @@ cleanup() {
     
     docker ps -aq --filter "name=titan_node" | xargs -r docker rm -f
     docker volume ls -q --filter "name=titan_data" | xargs -r docker volume rm
-    sudo apt-get purge -yq docker-ce docker-ce-cli containerd.io
-    sudo apt-get autoremove -yq
+    sudo apt-get purge -y docker-ce docker-ce-cli containerd.io
+    sudo apt-get autoremove -y
     sudo rm -rf /var/lib/docker /etc/docker
     screen -ls | grep "node_" | awk -F. '{print $1}' | xargs -r -I{} screen -X -S {} quit
 
