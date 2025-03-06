@@ -12,6 +12,7 @@ NETWORK_INTERFACE=$(ip route | grep default | awk '{print $5}' | head -n1)
 
 declare -A USED_KEYS=()
 declare -A USED_PORTS=()
+declare -A TEMP_KEYS=()
 
 show_menu() {
     clear
@@ -36,9 +37,9 @@ generate_random_port() {
 }
 
 generate_realistic_profile() {
-    local cpu=$((8 + (RANDOM % 8) * 2))       # 8-24 ядра с шагом 2
-    local ram=$((32 + (RANDOM % 16) * 32))    # 32-512GB с шагом 32
-    local ssd=$((512 + (RANDOM % 20) * 512))  # 512-10240GB с шагом 512
+    local cpu=$((8 + RANDOM % 17))            # 8-24 ядра
+    local ram=$((32 + (RANDOM % 16) * 32))    # 32-512GB
+    local ssd=$((512 + (RANDOM % 20) * 512))  # 512-10240GB
     echo "$cpu,$ram,$ssd"
 }
 
@@ -56,7 +57,7 @@ install_dependencies() {
     sudo apt-get update -yq && sudo apt-get upgrade -yq
     sudo apt-get install -yq \
         apt-transport-https ca-certificates curl gnupg lsb-release \
-        jq screen cgroup-tools net-tools ccze netcat iptables-persistent
+        jq screen cgroup-tools net-tools ccze netcat iptables-persistent bc
 
     sudo ufw allow 1234/udp
     sudo ufw allow 30000:40000/udp
@@ -80,6 +81,7 @@ create_node() {
     local volume="titan_data_$node_num"
     local node_ip="${BASE_IP%.*}.$(( ${BASE_IP##*.} + node_num ))"
     local mac=$(generate_fake_mac)
+    local docker_cpu=$(echo "scale=2; $cpu / $(nproc)" | bc)
 
     docker rm -f "titan_node_$node_num" 2>/dev/null
     docker volume create "$volume" >/dev/null || {
@@ -95,7 +97,7 @@ create_node() {
     if ! docker run -d \
         --name "titan_node_$node_num" \
         --restart unless-stopped \
-        --cpus "$cpu" \
+        --cpus "$docker_cpu" \
         --memory "${ram_gb}g" \
         --storage-opt "size=${ssd_gb}g" \
         --mac-address "$mac" \
@@ -124,6 +126,7 @@ create_node() {
 
 setup_nodes() {
     declare -A USED_KEYS=()
+    declare -A TEMP_KEYS=()
     
     while true; do
         read -p "Введите количество нод: " node_count
@@ -135,13 +138,25 @@ setup_nodes() {
         while true; do
             read -p "Введите ключ для ноды $i: " key
             key_upper=${key^^}
+            
             if [[ ${USED_KEYS[$key_upper]} ]]; then
                 echo -e "${RED}Ключ уже используется!${NC}"
-            elif [[ $key_upper =~ ^[A-F0-9]{8}-[A-F0-9]{4}-4[A-F0-9]{3}-[89AB][A-F0-9]{3}-[A-F0-9]{12}$ ]]; then
-                USED_KEYS[$key_upper]=1
+                continue
+            fi
+
+            if [[ ${TEMP_KEYS[$key_upper]} ]]; then
+                echo -e "${RED}Ключ уже используется в текущей сессии!${NC}"
+                continue
+            fi
+
+            if [[ $key_upper =~ ^[A-F0-9]{8}-[A-F0-9]{4}-4[A-F0-9]{3}-[89AB][A-F0-9]{3}-[A-F0-9]{12}$ ]]; then
+                TEMP_KEYS[$key_upper]=1
                 if create_node "$i" "$key_upper"; then
+                    USED_KEYS[$key_upper]=1
+                    unset TEMP_KEYS[$key_upper]
                     break
                 else
+                    unset TEMP_KEYS[$key_upper]
                     echo -e "${RED}Повторите ввод ключа для ноды $i${NC}"
                 fi
             else
