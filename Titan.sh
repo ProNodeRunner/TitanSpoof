@@ -8,7 +8,6 @@ ORANGE='\033[0;33m'
 GREEN='\033[0;32m'
 RED='\033[0;31m'
 NC='\033[0m'
-
 NETWORK_INTERFACE=$(ip route | grep default | awk '{print $5}' | head -n1)
 
 declare -A USED_KEYS=()
@@ -53,14 +52,11 @@ install_dependencies() {
         cgroup-tools \
         net-tools \
         ccze \
-        netcat
+        netcat \
+        iptables-persistent
 
     sudo ufw allow 30000:40000/udp
     sudo ufw reload
-
-    echo "net.core.rmem_max=2500000" | sudo tee -a /etc/sysctl.conf
-    echo "net.core.wmem_max=2500000" | sudo tee -a /etc/sysctl.conf
-    sudo sysctl -p >/dev/null
 
     curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --batch --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
@@ -68,8 +64,12 @@ install_dependencies() {
     sudo systemctl enable --now docker
     sudo usermod -aG docker "$USER"
 
-    echo -e "${GREEN}[✓] Система готова! Перезагрузите сервер.${NC}"
-    sleep 2
+    echo "net.core.rmem_max=2500000" | sudo tee -a /etc/sysctl.conf
+    echo "net.core.wmem_max=2500000" | sudo tee -a /etc/sysctl.conf
+    sudo sysctl -p >/dev/null
+
+    echo -e "${GREEN}[✓] Система готова!${NC}"
+    sleep 1
 }
 
 create_node() {
@@ -79,65 +79,45 @@ create_node() {
     local volume="titan_data_$node_num"
     local node_ip="${BASE_IP%.*}.$(( ${BASE_IP##*.} + node_num ))"
 
-    # Принудительная очистка
     docker rm -f "titan_node_$node_num" 2>/dev/null
-    docker volume rm -f "$volume" 2>/dev/null
-    sudo ip addr del "$node_ip/24" dev "$NETWORK_INTERFACE" 2>/dev/null
+    docker volume rm "$volume" 2>/dev/null
 
-    # Создание тома
     if ! docker volume create "$volume" >/dev/null; then
-        echo -e "${RED}[✗] Ошибка создания тома${NC}"
+        echo -e "${RED}[✗] Ошибка создания тома $volume${NC}"
         return 1
     fi
 
-    # Запись ключа
-    if ! docker run --rm -v "$volume:/data" alpine sh -c "echo '$identity_code' > /data/identity.key"; then
+    if ! echo "$identity_code" | docker run -i --rm -v "$volume:/data" busybox sh -c "cat > /data/identity.key"; then
         echo -e "${RED}[✗] Ошибка записи ключа${NC}"
         return 1
     fi
 
-    # Запуск контейнера
     if ! screen -dmS "node_$node_num" docker run -d \
         --name "titan_node_$node_num" \
         --restart unless-stopped \
+        --dns 8.8.8.8 \
         --network host \
         -v "$volume:/root/.titanedge" \
-        nezha123/titan-edge:latest; then
+        nezha123/titan-edge:latest \
+        --external-ip="$node_ip" \
+        --port="$port"; then
         echo -e "${RED}[✗] Ошибка запуска контейнера${NC}"
         return 1
     fi
 
-    # Настройка сети
     sudo ip addr add "${node_ip}/24" dev "$NETWORK_INTERFACE" 2>/dev/null
+    sudo iptables -t nat -A PREROUTING -i $NETWORK_INTERFACE -p udp --dport $port -j DNAT --to-destination $node_ip:$port
+    sudo netfilter-persistent save >/dev/null 2>&1
 
-    # Расширенная проверка
-    echo -e "${ORANGE}[*] Инициализация ноды (45 сек)...${NC}"
-    for i in {1..15}; do
-        if docker ps | grep -q "titan_node_$node_num"; then
-            break
-        fi
-        sleep 3
-    done
+    echo -e "${ORANGE}[*] Инициализация ноды (20 сек)...${NC}"
+    sleep 20
 
-    if ! docker ps | grep -q "titan_node_$node_num"; then
-        echo -e "${RED}[✗] Контейнер не запустился${NC}"
-        docker logs "titan_node_$node_num" 2>/dev/null || echo "Логи недоступны"
-        return 1
-    fi
-
-    # Проверка подключения
-    if ! docker exec "titan_node_$node_num" timeout 20 sh -c "while ! curl -sSf https://api.titan.network/health >/dev/null; do sleep 2; done"; then
-        echo -e "${RED}[✗] Ошибка подключения к сети${NC}"
-        docker logs --tail 20 "titan_node_$node_num"
-        return 1
-    fi
-
-    printf "${GREEN}[✓] Нода %02d | %2d ядер | %4dGB RAM | %4dGB SSD | IP: %s${NC}\n" \
-        "$node_num" "$cpu" "$ram" "$ssd" "$node_ip"
+    printf "${GREEN}[✓] Нода %02d | IP: %s | Порт: %5d | Ресурсы: %d ядер, %dMB RAM${NC}\n" \
+        "$node_num" "$node_ip" "$port" "$cpu" "$ram"
 }
 
 setup_nodes() {
-    declare -gA USED_KEYS=()
+    declare -A USED_KEYS=()
     
     while true; do
         read -p "Введите количество нод: " node_count
