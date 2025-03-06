@@ -12,18 +12,26 @@ NETWORK_INTERFACE=$(ip route | grep default | awk '{print $5}' | head -n1)
 
 declare -A USED_KEYS=()
 declare -A USED_PORTS=()
+DEPENDENCIES_INSTALLED=false
+
+check_dependencies() {
+    if command -v docker &>/dev/null && [ -f "/usr/bin/jq" ]; then
+        DEPENDENCIES_INSTALLED=true
+    else
+        DEPENDENCIES_INSTALLED=false
+    fi
+}
 
 show_menu() {
     clear
     echo -ne "${ORANGE}"
     curl -sSf "$LOGO_URL" 2>/dev/null || echo "=== TITAN NODE MANAGER v22 ==="
+    check_dependencies
     echo -e "\n1) Установить компоненты\n2) Создать ноды\n3) Проверить статус\n4) Показать логи\n5) Перезапустить\n6) Очистка\n7) Выход"
     
-    # Проверка установленных компонентов
-    if ! command -v docker &>/dev/null || [ ! -f "/usr/bin/jq" ]; then
-        echo -e "\n${RED}ВНИМАНИЕ: Компоненты не установлены! Сначала выполните пункт 1${NC}"
+    if ! $DEPENDENCIES_INSTALLED; then
+        echo -e "\n${RED}[!] Сначала установите компоненты (пункт 1)!${NC}"
     fi
-    
     echo -ne "${NC}"
 }
 
@@ -34,7 +42,7 @@ generate_random_port() {
     fi
 
     while true; do
-        port=$(shuf -i 30000-40000 -n 1)
+        port=$(shuf -i 30000-40000 -n1)
         [[ ! -v USED_PORTS[$port] ]] && ! ss -uln | grep -q ":${port} " && break
     done
     USED_PORTS[$port]=1
@@ -56,22 +64,37 @@ install_dependencies() {
     sudo bash -c "echo 'iptables-persistent iptables-persistent/autosave_v4 boolean false' | debconf-set-selections"
     sudo bash -c "echo 'iptables-persistent iptables-persistent/autosave_v6 boolean false' | debconf-set-selections"
 
-    sudo apt-get update -yq && sudo apt-get upgrade -yq
-    sudo apt-get install -yq \
+    if ! sudo apt-get update -yq || ! sudo apt-get upgrade -yq; then
+        echo -e "${RED}[✗] Ошибка обновления пакетов!${NC}"
+        return 1
+    fi
+
+    if ! sudo apt-get install -yq \
         apt-transport-https ca-certificates curl gnupg lsb-release \
-        jq screen cgroup-tools net-tools ccze netcat iptables-persistent
+        jq screen cgroup-tools net-tools ccze netcat iptables-persistent; then
+        echo -e "${RED}[✗] Ошибка установки базовых зависимостей!${NC}"
+        return 1
+    fi
 
     sudo ufw allow 1234/udp
     sudo ufw allow 30000:40000/udp
     sudo ufw reload
 
-    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --batch --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+    if ! curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --batch --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg; then
+        echo -e "${RED}[✗] Ошибка добавления Docker GPG!${NC}"
+        return 1
+    fi
+
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
     
-    sudo apt-get update -yq && sudo apt-get install -yq docker-ce docker-ce-cli containerd.io
+    if ! sudo apt-get update -yq || ! sudo apt-get install -yq docker-ce docker-ce-cli containerd.io; then
+        echo -e "${RED}[✗] Ошибка установки Docker!${NC}"
+        return 1
+    fi
+
     sudo systemctl enable --now docker
     sudo usermod -aG docker "$USER"
-
+    check_dependencies
     echo -e "${GREEN}[✓] Система готова!${NC}"
     sleep 1
 }
@@ -123,9 +146,9 @@ create_node() {
 }
 
 setup_nodes() {
-    # Проверка зависимостей
-    if ! command -v docker &>/dev/null || [ ! -f "/usr/bin/jq" ]; then
-        echo -e "${RED}ОШИБКА: Сначала установите компоненты (пункт 1)!${NC}"
+    check_dependencies
+    if ! $DEPENDENCIES_INSTALLED; then
+        echo -e "${RED}ОШИБКА: Сначала установите компоненты!${NC}"
         sleep 2
         return 1
     fi
@@ -201,6 +224,13 @@ show_logs() {
 }
 
 restart_nodes() {
+    check_dependencies
+    if ! $DEPENDENCIES_INSTALLED; then
+        echo -e "${RED}ОШИБКА: Сначала установите компоненты!${NC}"
+        sleep 2
+        return 1
+    fi
+
     echo -e "${ORANGE}[*] Перезапуск нод...${NC}"
     docker ps -aq --filter "name=titan_node" | xargs -r docker rm -f
     
@@ -278,6 +308,17 @@ case $1 in
         while true; do
             show_menu
             read -p "Выбор: " choice
+            
+            # Жёсткая блокировка пункта 2
+            if [[ "$choice" == "2" ]]; then
+                check_dependencies
+                if ! $DEPENDENCIES_INSTALLED; then
+                    echo -e "${RED}ОШИБКА: Сначала установите компоненты!${NC}"
+                    sleep 2
+                    continue
+                fi
+            fi
+
             case $choice in
                 1) install_dependencies ;;
                 2) setup_nodes ;;
