@@ -16,7 +16,7 @@ declare -A USED_PORTS=()
 show_menu() {
     clear
     echo -ne "${ORANGE}"
-    curl -sSf "$LOGO_URL" 2>/dev/null || echo "=== TITAN NODE MANAGER v18 ==="
+    curl -sSf "$LOGO_URL" 2>/dev/null || echo "=== TITAN NODE MANAGER v19 ==="
     echo -e "\n1) Установить компоненты\n2) Создать ноды\n3) Проверить статус\n4) Показать логи ноды\n5) Перезапустить все ноды\n6) Полная очистка\n7) Выход"
     echo -ne "${NC}"
 }
@@ -108,8 +108,7 @@ create_node() {
         --network host \
         -v "$volume:/root/.titanedge" \
         nezha123/titan-edge:latest \
-        --host "$node_ip" \
-        --port "$port"; then
+        --http-listen-address="$node_ip:$port"; then
         echo -e "${RED}[✗] Ошибка запуска контейнера${NC}"
         return 1
     fi
@@ -118,8 +117,8 @@ create_node() {
     sudo iptables -t nat -A PREROUTING -i $NETWORK_INTERFACE -p udp --dport $port -j DNAT --to-destination $node_ip:$port
     sudo netfilter-persistent save >/dev/null 2>&1
 
-    echo -e "${ORANGE}[*] Инициализация ноды (30 сек)...${NC}"
-    sleep 30
+    echo -e "${ORANGE}[*] Инициализация ноды (40 сек)...${NC}"
+    sleep 40
 
     printf "${GREEN}[✓] Нода %02d | IP: %s | Порт: %5d | Ресурсы: %d ядер, %dMB RAM${NC}\n" \
         "$node_num" "$node_ip" "$port" "$cpu" "$ram"
