@@ -120,7 +120,6 @@ docker build -t mytitan/proxy-titan-edge-custom -f Dockerfile.titan . || {
     exit 1
 }
 
-}
 sudo docker rm -f titanextract
 chmod +x ./titan-edge
 
