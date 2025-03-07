@@ -2,9 +2,8 @@
 ################################################################################
 # TITAN BLOCKCHAIN NODE FINAL INSTALLATION SCRIPT (ProxyChains + Socks5 + Titan)
 #
-# - Контейнер не завершается после titan-edge daemon start
-#   => run.sh запускает Titan Edge в фоне + tail -f /dev/null
-# - Избавляемся от ошибки "Container is restarting" при bind
+# - Исправлено: “proxychains: can't load process 'titan-edge'” => 
+#   гарантируем /usr/local/bin/titan-edge + PATH в Dockerfile + run.sh
 ################################################################################
 
 CONFIG_FILE="/etc/titan_nodes.conf"
@@ -40,7 +39,7 @@ show_menu() {
 }
 
 ###############################################################################
-# (1) install_dependencies: Устанавка Docker, сборка «mytitan/proxy-titan-edge»
+# (1) install_dependencies: Установка Docker, сборка image “mytitan/proxy-titan-edge”
 ###############################################################################
 install_dependencies() {
     echo -e "${ORANGE}[1/6] Инициализация системы...${NC}"
@@ -61,6 +60,7 @@ install_dependencies() {
     sudo ufw reload || true
 
     echo -e "${ORANGE}[4/6] Установка Docker...${NC}"
+    # Удаляем keyring, чтобы не спрашивало подтверждения
     sudo rm -f /usr/share/keyrings/docker-archive-keyring.gpg
     curl -fsSL https://download.docker.com/linux/ubuntu/gpg | \
       sudo gpg --batch --yes --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
@@ -75,22 +75,30 @@ https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
     sudo usermod -aG docker "$USER"
 
     echo -e "${ORANGE}[5/6] Сборка Docker-образа Titan+ProxyChains...${NC}"
-    # Dockerfile
     cat <<'EOF_DOCKER' > Dockerfile.titan
 FROM ubuntu:22.04
 
-RUN apt-get update -y && DEBIAN_FRONTEND=noninteractive apt-get install -y \
-    proxychains4 libproxychains4 wget ca-certificates docker.io \
-    && rm -rf /var/lib/apt/lists/*
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update -y && apt-get upgrade -y && \
+    apt-get install -y proxychains4 libproxychains4 wget ca-certificates docker.io && \
+    rm -rf /var/lib/apt/lists/*
 
 # Pull official Titan Edge
 RUN docker pull nezha123/titan-edge:latest || true
 
-RUN mkdir /titan && cd /titan && \
-    wget -qO titan-edge.tar.gz https://github.com/ProNodeRunner/titan-edge-binaries/raw/main/titan-edge_0.1.20_linux_amd64.tar.gz || true && \
-    tar xzf titan-edge.tar.gz || true && \
-    cp titan-edge /usr/local/bin/titan-edge || true && chmod +x /usr/local/bin/titan-edge || true
+# Копируем titan-edge бинарник
+RUN mkdir /titan
+WORKDIR /titan
+# Download some titan-edge release
+RUN wget -qO titan-edge.tar.gz https://github.com/ProNodeRunner/titan-edge-binaries/raw/main/titan-edge_0.1.20_linux_amd64.tar.gz || true
+RUN tar xzf titan-edge.tar.gz || true
+RUN cp titan-edge /usr/local/bin/titan-edge || true
+RUN chmod +x /usr/local/bin/titan-edge || true
 
+# ensure we have PATH
+ENV PATH="/usr/local/bin:${PATH}"
+
+# Setup proxychains conf
 RUN echo -e 'strict_chain\nproxy_dns\n[ProxyList]\n' > /etc/proxychains4.conf
 
 COPY run.sh /run.sh
@@ -100,18 +108,19 @@ ENV PRELOAD_PROXYCHAINS=1
 ENTRYPOINT ["/run.sh"]
 EOF_DOCKER
 
-    # run.sh: Запускаем Titan Edge в фоне + tail -f /dev/null
     cat <<'EOF_RUN' > run.sh
 #!/bin/bash
+# We run Titan Edge in background + tail -f /dev/null to keep container alive
+
 if [ "$PRELOAD_PROXYCHAINS" = "1" ] && [ -n "$ALL_PROXY" ]; then
   export LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libproxychains4.so
-  # Запускаем Titan Edge в фоне (daemon start) => &
-  proxychains4 titan-edge daemon start &
+  # Start Titan in background
+  proxychains4 /usr/local/bin/titan-edge daemon start &
 else
-  titan-edge daemon start &
+  /usr/local/bin/titan-edge daemon start &
 fi
 
-# Держим контейнер живым
+# Keep container alive
 exec tail -f /dev/null
 EOF_RUN
 
@@ -133,6 +142,7 @@ generate_country_ip() {
     fourth_octet=$(shuf -i 2-254 -n1)
     echo "${first_octet}.${second_octet}.${third_octet}.${fourth_octet}"
 }
+
 generate_random_port() {
     while true; do
         local p=$(shuf -i 30000-40000 -n1)
@@ -142,6 +152,7 @@ generate_random_port() {
         fi
     done
 }
+
 generate_spoofer_profile() {
     local cpus=(8 10 12 14 16 18 20 22 24 26 28 30 32)
     local c=${cpus[$RANDOM % ${#cpus[@]}]}
@@ -149,12 +160,13 @@ generate_spoofer_profile() {
     local ssd=$((512 + (RANDOM % 20)*512))
     echo "$c,$ram,$ssd"
 }
+
 generate_fake_mac() {
     printf "02:%02x:%02x:%02x:%02x:%02x" $((RANDOM%256)) $((RANDOM%256)) $((RANDOM%256)) $((RANDOM%256)) $((RANDOM%256))
 }
 
 ###############################################################################
-# (3) Создание и запуск ноды: mytitan/proxy-titan-edge => tail -f
+# (3) Создание и запуск ноды
 ###############################################################################
 create_node() {
     local idx="$1"
@@ -203,19 +215,20 @@ create_node() {
     sudo iptables -t nat -A PREROUTING -p udp --dport "$host_port" -j DNAT --to-destination "$node_ip:1234"
     sudo netfilter-persistent save >/dev/null 2>&1
 
-    # Запись в конфиг
+    # Записываем в конфиг
     echo "${idx}|${identity_code}|${mac}|${host_port}|${node_ip}|$(date +%s)|${proxy_host}:${proxy_port}:${proxy_user}:${proxy_pass}|${cpu_val},${ram_val},${ssd_val}" \
       >> "$CONFIG_FILE"
 
     echo -e "${ORANGE}Спуф IP: $node_ip -> порт $host_port${NC}"
     echo -e "${ORANGE}[*] Bind ноды $idx (--hash=${identity_code})...${NC}"
 
-    # Увеличиваем задержку => 10s (чтобы titan-edge daemon успел создаться ключ)
+    # Sleep 10
     sleep 10
 
-    # Выполняем bind:
+    # Bind
+    # /usr/local/bin/titan-edge + proxychains4
     local BIND_URL="https://api-test1.container1.titannet.io/api/v2/device/binding"
-    if ! docker exec "titan_node_$idx" proxychains4 titan-edge bind --hash="$identity_code" "$BIND_URL" 2>&1; then
+    if ! docker exec "titan_node_$idx" proxychains4 /usr/local/bin/titan-edge bind --hash="$identity_code" "$BIND_URL" 2>&1; then
         echo -e "${RED}[✗] Bind ошибка. Возможно, ключ не создан или identity неверен${NC}"
     else
         echo -e "${GREEN}[✓] Bind OK для ноды $idx${NC}"
@@ -280,7 +293,7 @@ setup_nodes() {
 }
 
 ###############################################################################
-# (7) Проверка статуса: ищем "Edge registered successfully" => ALIVE
+# (7) Проверка статуса
 ###############################################################################
 check_status() {
     clear
@@ -300,16 +313,14 @@ check_status() {
                    "$cname" "$hport" "$fip" "-" "${RED}🔴 DEAD${NC}"
             continue
         fi
-
         local info
-        info=$(docker exec "$cname" proxychains4 titan-edge info 2>/dev/null || true)
+        info=$(docker exec "$cname" proxychains4 /usr/local/bin/titan-edge info 2>/dev/null || true)
         local st
         if echo "$info" | grep -iq "Edge registered successfully"; then
             st="${GREEN}🟢 ALIVE${NC}"
         else
-            st="${RED}🔴 NOT_READY${NC}"
+            st="${RED}🔴 DEAD${NC}"
         fi
-
         IFS=',' read -r cpuv ramv ssdv <<< "$hwdata"
         local spoofer="${cpuv} CPU / ${ramv}GB / ${ssdv}GB"
         printf "%-15s | %-5s | %-15s | %-25s | %b\n" \
@@ -323,7 +334,7 @@ check_status() {
 }
 
 ###############################################################################
-# (8) Меню 4: Логи (5 строк) всех нод
+# (8) Логи (последние 5 строк) всех нод
 ###############################################################################
 show_logs() {
     clear
@@ -332,7 +343,6 @@ show_logs() {
         read -p $'\nНажмите любую клавишу...' -n1 -s
         return
     fi
-
     while IFS='|' read -r idx code mac hport fip stamp pxy hwdata; do
         local cname="titan_node_$idx"
         echo -e "\n=== Логи $cname (tail=5) ==="
@@ -342,7 +352,6 @@ show_logs() {
             echo "(Контейнер не запущен)"
         fi
     done < "$CONFIG_FILE"
-
     read -p $'\nНажмите любую клавишу...' -n1 -s
 }
 
@@ -422,7 +431,6 @@ auto_start_nodes() {
         echo -e "${RED}Нет $CONFIG_FILE, автозапуск невозможен!${NC}"
         exit 1
     fi
-
     while IFS='|' read -r idx code mac hport fip stamp pxy hw; do
         local proxy_host proxy_port proxy_user proxy_pass
         IFS=':' read -r proxy_host proxy_port proxy_user proxy_pass <<< "$pxy"
