@@ -120,13 +120,12 @@ RUN apt update && \
     DEBIAN_FRONTEND=noninteractive apt install -y proxychains4 curl && \
     echo "strict_chain" > /etc/proxychains4.conf && \
     echo "proxy_dns" >> /etc/proxychains4.conf && \
-    echo "proxychains.conf.proxy_dns boolean true" >> /etc/proxychains4.conf && \
     echo "tcp_read_time_out 15000" >> /etc/proxychains4.conf && \
     echo "tcp_connect_time_out 8000" >> /etc/proxychains4.conf && \
     echo "[ProxyList]" >> /etc/proxychains4.conf
 
 # Устанавливаем proxy через переменные окружения (ENV)
-RUN echo "socks5 $PROXY_HOST $PROXY_PORT $PROXY_USER $PROXY_PASS" >> /etc/proxychains4.conf
+RUN bash -c 'echo "socks5 ${PROXY_HOST} ${PROXY_PORT} ${PROXY_USER} ${PROXY_PASS}" >> /etc/proxychains4.conf'
 EOF
 
 # Собираем кастомный образ
@@ -450,7 +449,7 @@ Description=Titan Node Service
 After=network.target docker.service
 
 [Service]
-ExecStart=/bin/bash -c 'https://raw.githubusercontent.com/ProNodeRunner/TitanSpoof/refs/heads/main/Titan.sh --auto-start'
+ExecStart=/bin/bash -c 'curl -sSL https://raw.githubusercontent.com/ProNodeRunner/TitanSpoof/main/Titan.sh | bash -s -- --auto-start'
 Restart=on-failure
 RestartSec=60
 
