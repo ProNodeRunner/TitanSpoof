@@ -111,7 +111,9 @@ FROM ubuntu:22.04
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update -y && apt-get upgrade -y && \
     apt-get install -y proxychains4 libproxychains4 libstdc++6 && \
+    ln -s /usr/lib/x86_64-linux-gnu/libproxychains4.so.4 /usr/lib/x86_64-linux-gnu/libproxychains4.so && \
     rm -rf /var/lib/apt/lists/*
+
 
 # Копируем извлечённый бинарник
 COPY titan-edge /usr/local/bin/titan-edge
@@ -155,8 +157,7 @@ EOF_DOCKER
     # run.sh
     cat <<'EOF_RUN' > run.sh
 #!/bin/bash
-if [ "$PRELOAD_PROXYCHAINS" = "1" ] && [ -n "$ALL_PROXY" ]; then
-  export LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libproxychains4.so
+if [ -n "$ALL_PROXY" ]; then
   proxychains4 titan-edge daemon start &
 else
   titan-edge daemon start &
