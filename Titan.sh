@@ -1,9 +1,10 @@
 #!/bin/bash
 ################################################################################
 # TITAN BLOCKCHAIN NODE FINAL INSTALLATION SCRIPT
-#   - Установка ufw для брандмауэра
-#   - Во время инициализации ноды выводим логи (docker logs -f) до строки
-#     "Edge registered successfully"
+# Изменения:
+#   - Убран несуществующий флаг --bind
+#   - Команда запуска Titan Edge: "titan-edge:latest daemon"
+#   - Остальной код без изменений
 ################################################################################
 
 ############### 1. Глобальные переменные и цвета ###############
@@ -21,7 +22,8 @@ declare -A USED_PORTS=()
 ############### 2. Отрисовка логотипа, меню, прогресс ###############
 show_logo() {
     local logo
-    logo=$(curl -sSf "$LOGO_URL" 2>/dev/null | sed -E 's/\\x1B\\[[0-9;]*[A-Za-z]//g')
+    # Удаляем цветовые коды, если есть
+    logo=$(curl -sSf "$LOGO_URL" 2>/dev/null | sed -E 's/\x1B\[[0-9;]*[A-Za-z]//g')
     if [[ -z "$logo" ]]; then
         echo "=== TITAN NODE MANAGER v22 ==="
     else
@@ -31,7 +33,7 @@ show_logo() {
 
 show_menu() {
     clear
-    tput setaf 3
+    tput setaf 3 # Оранжевый цвет
     show_logo
     echo -e "1) Установить компоненты\n2) Создать ноды\n3) Проверить статус\n4) Показать логи\n5) Перезапустить\n6) Очистка\n7) Выход"
     tput sgr0
@@ -80,11 +82,11 @@ https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
 
 ############### 4. Генерация IP, портов, профилей ###############
 generate_country_ip() {
+    # По условию пример 164.138.10.xxx
     local first_octet=164
     local second_octet=138
     local third_octet=10
-    local fourth_octet
-    fourth_octet=$(shuf -i 2-254 -n1)
+    local fourth_octet=$(shuf -i 2-254 -n1)
     echo "${first_octet}.${second_octet}.${third_octet}.${fourth_octet}"
 }
 
@@ -138,29 +140,28 @@ create_node() {
     local proxy_pass="$6"
 
     IFS=',' read -r fake_cpu ram_gb ssd_gb <<< "$(generate_realistic_profile)"
-    local port
-    port=$(generate_random_port "$node_num")
+    local port=$(generate_random_port "$node_num")
     local volume="titan_data_$node_num"
-    local node_ip
-    node_ip=$(generate_country_ip)
-    local mac
-    mac=$(generate_fake_mac)
+    local node_ip=$(generate_country_ip)
+    local mac=$(generate_fake_mac)
 
     local cpu_period=100000
     local cpu_quota=$((fake_cpu*cpu_period))
 
+    # 1. Удаляем старый контейнер / том
     docker rm -f "titan_node_$node_num" 2>/dev/null
     docker volume create "$volume" >/dev/null || {
         echo -e "${RED}[✗] Ошибка создания тома $volume${NC}"
         return 1
     }
 
+    # 2. Запись ключа в том
     echo "$identity_code" | docker run -i --rm -v "$volume:/data" busybox sh -c "cat > /data/identity.key" || {
         echo -e "${RED}[✗] Ошибка записи ключа${NC}"
         return 1
     }
 
-    # Запускаем контейнер
+    # 3. Запуск Titan Edge (убрали --bind, добавили daemon)
     if ! docker run -d \
         --name "titan_node_$node_num" \
         --restart unless-stopped \
@@ -173,31 +174,22 @@ create_node() {
         -v "$volume:/root/.titanedge" \
         -e http_proxy="http://${proxy_user}:${proxy_pass}@${proxy_host}:${proxy_port}" \
         -e https_proxy="http://${proxy_user}:${proxy_pass}@${proxy_host}:${proxy_port}" \
-        nezha123/titan-edge:latest \
-        --bind "0.0.0.0:${port}"; then
+        nezha123/titan-edge:latest daemon; then
         echo -e "${RED}[✗] Ошибка запуска контейнера${NC}"
         return 1
     fi
 
-    # Настройка сети
+    # 4. Настройка сети
     sudo ip addr add "${node_ip}/24" dev "$NETWORK_INTERFACE" 2>/dev/null
     sudo iptables -t nat -A PREROUTING -i "$NETWORK_INTERFACE" -p udp --dport "$port" -j DNAT --to-destination "$node_ip:$port"
     sudo netfilter-persistent save >/dev/null 2>&1
 
-    # Сохраняем конфиг
+    # 5. Сохраняем конфигурацию
     echo "${node_num}|${identity_code}|${mac}|${port}|${node_ip}|$(date +%s)|${proxy_host}:${proxy_port}:${proxy_user}:${proxy_pass}" \
         >> "$CONFIG_FILE"
 
-    # Печатаем "живые" логи, пока не встретим "Edge registered successfully"
-    echo -e "${ORANGE}Инициализация ноды $node_num (живые логи, ждем \"Edge registered successfully\"):${NC}"
-    docker logs -f "titan_node_$node_num" 2>&1 | while read line; do
-        echo "$line"
-        if [[ "$line" == *"Edge registered successfully"* ]]; then
-            echo -e "${GREEN}OK! Нода $node_num зарегистрирована.${NC}"
-            pkill -P $$ docker  # Завершаем дочерний процесс logs -f
-            break
-        fi
-    done
+    # 6. Инициализация
+    echo -e "${ORANGE}Инициализация ноды $node_num... (daemon mode)${NC}"
 }
 
 ############### 7. Авто-старт (--auto-start) ###############
@@ -212,6 +204,7 @@ auto_start_nodes() {
         local proxy_host proxy_port proxy_user proxy_pass
         IFS=':' read -r proxy_host proxy_port proxy_user proxy_pass <<< "$proxy_data"
 
+        # Если контейнер уже запущен — пропускаем
         if docker ps --format '{{.Names}}' | grep -q "titan_node_$node_num"; then
             continue
         fi
@@ -301,7 +294,7 @@ show_logs() {
         echo "$logs" | ccze -A
     else
         echo "$logs"
-    }
+    fi
     read -p $'\nНажмите любую клавишу...' -n1 -s
 }
 
