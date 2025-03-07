@@ -1,16 +1,12 @@
 #!/bin/bash
 ################################################################################
 # TITAN BLOCKCHAIN NODE FINAL INSTALLATION SCRIPT
-# Изменения и дополнения:
-#   1) Меню снова оранжевое.
-#   2) Убран повторный clear после install_dependencies (чтобы не казалось,
-#      что открывается дополнительное окно).
-#   3) Вместо "--cpus" используется "--cpu-quota", чтобы эмулировать 8..32 ядер
-#      даже если физически доступно меньше (убирает ошибку Docker).
-#   4) Генерируем IP вида 164.138.10.xxxx.
-#   5) Перед вводом ключа для каждой ноды спрашиваем прокси (host:port:user:pass).
-#   6) Проверяем доступность прокси (curl -x ...), при неудаче просим заново.
-#   7) Если прокси OK, передаём в контейнер как http_proxy/https_proxy (спуф).
+# Изменения:
+#   1) Убрано повторное show_logo в install_dependencies, меню выводится один раз.
+#   2) Логотип заворачиваем в sed, чтобы убрать возможные цветовые сбросы (\033...),
+#      иначе сбивается оранжевый цвет меню.
+#   3) Прокси используем HTTP-формат (http://host:port:user:pass), а если нужно
+#      SOCKS5 - допишем другой блок.
 ################################################################################
 
 ############### 1. Глобальные переменные и цвета ###############
@@ -22,21 +18,31 @@ RED='\033[0;31m'
 NC='\033[0m'
 NETWORK_INTERFACE=$(ip route | grep default | awk '{print $5}' | head -n1)
 
+# Массивы для проверки занятых ключей и портов
 declare -A USED_KEYS=()
 declare -A USED_PORTS=()
 
 ############### 2. Отрисовка логотипа, меню, прогресс ###############
 show_logo() {
-    echo -e "${ORANGE}"
-    curl -sSf "$LOGO_URL" 2>/dev/null || echo "=== TITAN NODE MANAGER v22 ==="
-    echo -e "${NC}"
+    # Скачиваем логотип и убираем цветовые коды если есть
+    # -E расширенный regexp, s/\x1B\[[0-9;]*[A-Za-z]//g удаляет ANSI escape-последовательности
+    local logo
+    logo=$(curl -sSf "$LOGO_URL" 2>/dev/null | sed -E 's/\x1B\[[0-9;]*[A-Za-z]//g')
+    if [[ -z "$logo" ]]; then
+        echo "=== TITAN NODE MANAGER v22 ==="
+    else
+        echo "$logo"
+    fi
 }
 
 show_menu() {
     clear
-    echo -ne "${ORANGE}"
+    # Оранжевый цвет
+    echo -e "${ORANGE}"
     show_logo
+    # Меню
     echo -e "1) Установить компоненты\n2) Создать ноды\n3) Проверить статус\n4) Показать логи\n5) Перезапустить\n6) Очистка\n7) Выход"
+    # Сброс цвета
     echo -ne "${NC}"
 }
 
@@ -49,8 +55,7 @@ progress_step() {
 
 ############### 3. Установка зависимостей ###############
 install_dependencies() {
-    show_logo
-
+    # Убрали повторный show_logo, просто прогресс в оранжевом цвете
     progress_step 1 5 "Инициализация системы"
     export DEBIAN_FRONTEND=noninteractive
     sudo bash -c "echo 'iptables-persistent iptables-persistent/autosave_v4 boolean false' | debconf-set-selections"
@@ -82,14 +87,13 @@ https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
     sleep 1
 }
 
-############### 4. Генерация IP, портов, фейковых профилей ###############
-# IP вида 164.138.10.xxx
+############### 4. Генерация IP, портов, профилей ###############
 generate_country_ip() {
+    # По условию оставляем пример 164.138.10.xxx
     local first_octet=164
     local second_octet=138
     local third_octet=10
-    local fourth_octet
-    fourth_octet=$(shuf -i 2-254 -n1)
+    local fourth_octet=$(shuf -i 2-254 -n1)
     echo "${first_octet}.${second_octet}.${third_octet}.${fourth_octet}"
 }
 
@@ -107,11 +111,10 @@ generate_random_port() {
 }
 
 generate_realistic_profile() {
-    # CPU: 8..32 (шаг 2); RAM: 32..512GB; SSD: 512..10240GB
     local cpu_values=(8 10 12 14 16 18 20 22 24 26 28 30 32)
     local cpu=${cpu_values[$RANDOM % ${#cpu_values[@]}]}
-    local ram=$((32 + (RANDOM % 16) * 32))    # 32..512
-    local ssd=$((512 + (RANDOM % 20) * 512)) # 512..10240
+    local ram=$((32 + (RANDOM % 16) * 32))    
+    local ssd=$((512 + (RANDOM % 20) * 512))
     echo "$cpu,$ram,$ssd"
 }
 
@@ -120,14 +123,15 @@ generate_fake_mac() {
 }
 
 ############### 5. Проверка прокси ###############
+# По умолчанию используем http://host:port:user:pass
+# Если хотим SOCKS5, можно было бы добавить --socks5
 check_proxy() {
     local proxy_host=$1
     local proxy_port=$2
     local proxy_user=$3
     local proxy_pass=$4
 
-    # Попробуем curl с таймаутом 5 секунд
-    # Выведем IP, который видит сайт (api.ipify.org)
+    # HTTP proxy
     local output
     output=$(curl -m 5 -s --proxy "http://${proxy_host}:${proxy_port}" --proxy-user "${proxy_user}:${proxy_pass}" https://api.ipify.org)
     if [[ -z "$output" ]]; then
@@ -145,22 +149,16 @@ create_node() {
     local proxy_user="$5"
     local proxy_pass="$6"
 
-    # Параметры CPU/RAM/SSD
     IFS=',' read -r fake_cpu ram_gb ssd_gb <<< "$(generate_realistic_profile)"
-    local port
-    port=$(generate_random_port "$node_num")
+    local port=$(generate_random_port "$node_num")
     local volume="titan_data_$node_num"
-    local node_ip
-    node_ip=$(generate_country_ip)
-    local mac
-    mac=$(generate_fake_mac)
+    local node_ip=$(generate_country_ip)
+    local mac=$(generate_fake_mac)
 
-    # Поддержка CPU через cpu-quota
     local cpu_period=100000
     local cpu_quota=$((fake_cpu*cpu_period))
 
     docker rm -f "titan_node_$node_num" 2>/dev/null
-
     docker volume create "$volume" >/dev/null || {
         echo -e "${RED}[✗] Ошибка создания тома $volume${NC}"
         return 1
@@ -171,7 +169,7 @@ create_node() {
         return 1
     }
 
-    # Пробуем эмулировать прокси через ENV
+    # Запуск ноды с http_proxy / https_proxy
     if ! docker run -d \
         --name "titan_node_$node_num" \
         --restart unless-stopped \
@@ -192,12 +190,11 @@ create_node() {
         return 1
     fi
 
-    # Добавляем IP на хост
+    # Добавляем IP
     sudo ip addr add "${node_ip}/24" dev "$NETWORK_INTERFACE" 2>/dev/null
     sudo iptables -t nat -A PREROUTING -i "$NETWORK_INTERFACE" -p udp --dport "$port" -j DNAT --to-destination "$node_ip:$port"
     sudo netfilter-persistent save >/dev/null 2>&1
 
-    # Запись в конфиг: node_num|key|mac|port|ip|timestamp|proxy_host:port:user:pass
     echo "${node_num}|${identity_code}|${mac}|${port}|${node_ip}|$(date +%s)|${proxy_host}:${proxy_port}:${proxy_user}:${proxy_pass}" \
         >> "$CONFIG_FILE"
 
@@ -216,19 +213,14 @@ auto_start_nodes() {
         exit 1
     fi
 
-    # Формат: node_num|key|mac|port|ip|timestamp|proxy_host:port:user:pass
     while IFS='|' read -r node_num node_key _ _ _ _ proxy_data; do
         [[ -z "$node_num" || -z "$node_key" ]] && continue
-
-        # Разбираем proxy_data, если присутствует
         local proxy_host proxy_port proxy_user proxy_pass
         IFS=':' read -r proxy_host proxy_port proxy_user proxy_pass <<< "$proxy_data"
 
-        # Проверяем, не создан ли контейнер
         if docker ps --format '{{.Names}}' | grep -q "titan_node_$node_num"; then
             continue
         fi
-
         create_node "$node_num" "$node_key" "$proxy_host" "$proxy_port" "$proxy_user" "$proxy_pass"
     done < "$CONFIG_FILE"
 }
@@ -236,7 +228,6 @@ auto_start_nodes() {
 ############### 8. Меню и функции управления ###############
 setup_nodes() {
     local node_count
-
     while true; do
         read -p "Введите количество нод: " node_count
         [[ "$node_count" =~ ^[1-9][0-9]*$ ]] && break
@@ -244,31 +235,26 @@ setup_nodes() {
     done
 
     for ((i=1; i<=node_count; i++)); do
-        # Сначала спрашиваем прокси
         local proxyInput proxy_host proxy_port proxy_user proxy_pass
         while true; do
-            echo -e "${ORANGE}Укажите прокси в формате: host:port:user:pass${NC}"
+            echo -e "${ORANGE}Укажите прокси в формате: host:port:user:pass${NC} (http-протокол)"
             read -p "Прокси для ноды $i: " proxyInput
 
-            # Разбираем поля
             IFS=':' read -r proxy_host proxy_port proxy_user proxy_pass <<< "$proxyInput"
-
-            # Проверка на заполненность
             if [[ -z "$proxy_host" || -z "$proxy_port" || -z "$proxy_user" || -z "$proxy_pass" ]]; then
-                echo -e "${RED}Неверный формат. Повторите ввод!${NC}"
+                echo -e "${RED}Неверный формат! Повторите ввод.${NC}"
                 continue
             fi
 
-            # Пробуем проверить прокси
             if check_proxy "$proxy_host" "$proxy_port" "$proxy_user" "$proxy_pass"; then
-                echo -e "${GREEN}Прокси активно: $proxy_host:$proxy_port${NC}"
+                echo -e "${GREEN}Прокси OK: $proxy_host:$proxy_port${NC}"
                 break
             else
                 echo -e "${RED}Прокси недоступно! Повторите ввод.${NC}"
             fi
         done
 
-        # Далее спрашиваем ключ
+        # Далее ключ
         while true; do
             read -p "Введите ключ для ноды $i: " key
             local key_upper=${key^^}
@@ -277,8 +263,6 @@ setup_nodes() {
                 echo -e "${RED}Ключ уже используется!${NC}"
                 continue
             fi
-
-            # Проверяем формат (UUID v4)
             if [[ $key_upper =~ ^[A-F0-9]{8}-[A-F0-9]{4}-4[A-F0-9]{3}-[89AB][A-F0-9]{3}-[A-F0-9]{12}$ ]]; then
                 if create_node "$i" "$key_upper" "$proxy_host" "$proxy_port" "$proxy_user" "$proxy_pass"; then
                     USED_KEYS[$key_upper]=1
@@ -291,7 +275,6 @@ setup_nodes() {
             fi
         done
     done
-
     echo -e "\n${GREEN}Создано нод: ${node_count}${NC}"
     read -p $'\nНажмите любую клавишу...' -n1 -s
 }
@@ -300,13 +283,13 @@ check_status() {
     clear
     printf "${ORANGE}%-20s | %-17s | %-15s | %-15s | %s${NC}\n" "Контейнер" "MAC" "Порт" "IP" "Статус"
 
-    # строка: node_num|key|mac|port|ip|timestamp|proxy
     while IFS='|' read -r node_num node_key mac port ip timestamp proxy_data; do
         local container_name="titan_node_$node_num"
+        local status
         if docker ps | grep -q "$container_name"; then
-            local status="${GREEN}🟢 ALIVE${NC}"
+            status="${GREEN}🟢 ALIVE${NC}"
         else
-            local status="${RED}🔴 DEAD${NC}"
+            status="${RED}🔴 DEAD${NC}"
         fi
         printf "%-20s | %-17s | %-15s | %-15s | %b\n" "$container_name" "$mac" "$port" "$ip" "$status"
     done < "$CONFIG_FILE"
@@ -335,10 +318,8 @@ restart_nodes() {
 
     if [ -f "$CONFIG_FILE" ]; then
         while IFS='|' read -r node_num node_key mac port ip timestamp proxy_data; do
-            # Разбираем proxy
             local proxy_host proxy_port proxy_user proxy_pass
             IFS=':' read -r proxy_host proxy_port proxy_user proxy_pass <<< "$proxy_data"
-
             create_node "$node_num" "$node_key" "$proxy_host" "$proxy_port" "$proxy_user" "$proxy_pass"
         done < "$CONFIG_FILE"
         echo -e "${GREEN}[✓] Ноды перезапущены!${NC}"
@@ -369,7 +350,6 @@ cleanup() {
     while IFS='|' read -r node_num node_key mac port ip timestamp proxy_data; do
         sudo ip addr del "$ip/24" dev "$NETWORK_INTERFACE" 2>/dev/null
     done < "$CONFIG_FILE"
-
     sudo iptables -t nat -F && sudo iptables -t mangle -F
     sudo netfilter-persistent save >/dev/null 2>&1
 
