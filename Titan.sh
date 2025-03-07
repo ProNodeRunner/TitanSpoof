@@ -245,21 +245,13 @@ create_node() {
     local BIND_URL="https://api-test1.container1.titannet.io/api/v2/device/binding"
 
     if docker exec "titan_node_$idx" proxychains4 /usr/bin/titan-edge bind --hash="$identity_code" "$BIND_URL"; then
-        echo -e "${GREEN}[✓] Bind OK для ноды $idx${NC}"
-    else
-        echo -e "${RED}[✗] Bind ошибка. Возможно, ключ не создан или identity неверен${NC}"
-        echo -e "${RED}Проверяем логи контейнера...${NC}"
-        docker logs --tail 10 "titan_node_$idx"
-    fi
-
-
-if docker exec "titan_node_$idx" proxychains4 /usr/bin/titan-edge bind --hash="$identity_code" "$BIND_URL"; then
     echo -e "${GREEN}[✓] Bind OK для ноды $idx${NC}"
 else
     echo -e "${RED}[✗] Bind ошибка. Возможно, ключ не создан или identity неверен${NC}"
     echo -e "${RED}Проверяем логи контейнера...${NC}"
     docker logs --tail 10 "titan_node_$idx"
 fi
+
 
 }
 
