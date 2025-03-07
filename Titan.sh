@@ -1,8 +1,10 @@
 #!/bin/bash
 ################################################################################
-# TITAN BLOCKCHAIN NODE FINAL INSTALLATION SCRIPT (ProxyChains + Socks5 + Titan)
-# Resolves "proxychains: can't load process 'titan-edge': No such file or directory"
-# by ensuring /usr/bin/titan-edge exists, is x86_64, and is in PATH.
+# TITAN BLOCKCHAIN NODE FINAL INSTALLATION SCRIPT
+# (ProxyChains + Socks5 + Titan) + Extract titan-edge from official container
+#
+# Решает “proxychains: can't load process 'titan-edge': No such file or directory”
+# тем, что извлекаем бинарник из nezha123/titan-edge:latest
 ################################################################################
 
 CONFIG_FILE="/etc/titan_nodes.conf"
@@ -38,7 +40,7 @@ show_menu() {
 }
 
 ###############################################################################
-# (1) install_dependencies: Установка Docker, сборка mytitan/proxy-titan-edge
+# (1) install_dependencies
 ###############################################################################
 install_dependencies() {
     echo -e "${ORANGE}[1/6] Инициализация системы...${NC}"
@@ -81,19 +83,17 @@ RUN apt-get update -y && apt-get upgrade -y && \
     apt-get install -y proxychains4 libproxychains4 wget ca-certificates docker.io libstdc++6 && \
     rm -rf /var/lib/apt/lists/*
 
-# Pull official Titan Edge
-RUN docker pull nezha123/titan-edge:latest || true
+# 1) Pull official Titan Edge container
+RUN docker pull nezha123/titan-edge:latest
 
-# Copy Titan Edge
-RUN mkdir /titan
-WORKDIR /titan
-RUN wget -qO titan-edge.tar.gz https://github.com/ProNodeRunner/titan-edge-binaries/raw/main/titan-edge_0.1.20_linux_amd64.tar.gz || true
-RUN tar xzf titan-edge.tar.gz || true
-RUN cp titan-edge /usr/local/bin/titan-edge || true
-RUN chmod +x /usr/local/bin/titan-edge || true
+# 2) Extract titan-edge binary from that container
+RUN docker create --name extract nezha123/titan-edge:latest
+RUN docker cp extract:/usr/local/bin/titan-edge /usr/local/bin/titan-edge || true
+RUN docker rm extract
+RUN chmod +x /usr/local/bin/titan-edge
 RUN ln -s /usr/local/bin/titan-edge /usr/bin/titan-edge
 
-# proxychains config
+# 3) Setup proxychains conf
 RUN echo -e 'strict_chain\nproxy_dns\n[ProxyList]\n' > /etc/proxychains4.conf
 
 COPY run.sh /run.sh
@@ -103,12 +103,11 @@ ENV PRELOAD_PROXYCHAINS=1
 ENTRYPOINT ["/run.sh"]
 EOF_DOCKER
 
-    # run.sh: Titan Edge daemon start & tail -f /dev/null
     cat <<'EOF_RUN' > run.sh
 #!/bin/bash
+# Start Titan Edge in background, keep container alive
 if [ "$PRELOAD_PROXYCHAINS" = "1" ] && [ -n "$ALL_PROXY" ]; then
   export LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libproxychains4.so
-  # daemon start in background
   proxychains4 titan-edge daemon start &
 else
   titan-edge daemon start &
@@ -133,6 +132,7 @@ generate_country_ip() {
     local fourth_octet=$(shuf -i 2-254 -n1)
     echo "${first_octet}.${second_octet}.${third_octet}.${fourth_octet}"
 }
+
 generate_random_port() {
     while true; do
         local p=$(shuf -i 30000-40000 -n1)
@@ -142,6 +142,7 @@ generate_random_port() {
         fi
     done
 }
+
 generate_spoofer_profile() {
     local cpus=(8 10 12 14 16 18 20 22 24 26 28 30 32)
     local c=${cpus[$RANDOM % ${#cpus[@]}]}
@@ -149,12 +150,13 @@ generate_spoofer_profile() {
     local ssd=$((512 + (RANDOM % 20)*512))
     echo "$c,$ram,$ssd"
 }
+
 generate_fake_mac() {
     printf "02:%02x:%02x:%02x:%02x:%02x" $((RANDOM%256)) $((RANDOM%256)) $((RANDOM%256)) $((RANDOM%256)) $((RANDOM%256))
 }
 
 ###############################################################################
-# (3) Создание и запуск ноды
+# (3) Создание/запуск ноды
 ###############################################################################
 create_node() {
     local idx="$1"
@@ -178,23 +180,24 @@ create_node() {
 
     echo -e "${ORANGE}Запуск titan_node_$idx (CPU=$cpu_val, RAM=${ram_val}G), порт=$host_port${NC}"
     if ! docker run -d \
-      --name "titan_node_$idx" \
-      --restart unless-stopped \
-      --cpu-period="$cpu_period" \
-      --cpu-quota="$cpu_quota" \
-      --memory "${ram_val}g" \
-      --memory-swap "$((ram_val * 2))g" \
-      --mac-address "$mac" \
-      -p "${host_port}:1234/udp" \
-      -v "$volume:/root/.titanedge" \
-      -e ALL_PROXY="socks5://${proxy_user}:${proxy_pass}@${proxy_host}:${proxy_port}" \
-      -e PRELOAD_PROXYCHAINS=1 \
-      mytitan/proxy-titan-edge:latest
+        --name "titan_node_$idx" \
+        --restart unless-stopped \
+        --cpu-period="$cpu_period" \
+        --cpu-quota="$cpu_quota" \
+        --memory "${ram_val}g" \
+        --memory-swap "$((ram_val * 2))g" \
+        --mac-address "$mac" \
+        -p "${host_port}:1234/udp" \
+        -v "$volume:/root/.titanedge" \
+        -e ALL_PROXY="socks5://${proxy_user}:${proxy_pass}@${proxy_host}:${proxy_port}" \
+        -e PRELOAD_PROXYCHAINS=1 \
+        mytitan/proxy-titan-edge:latest
     then
         echo -e "${RED}[✗] Ошибка запуска контейнера titan_node_$idx${NC}"
         return 1
     fi
 
+    # Спуф IP
     sudo ip addr add "${node_ip}/24" dev "$NETWORK_INTERFACE" 2>/dev/null
     sudo iptables -t nat -A PREROUTING -p udp --dport "$host_port" -j DNAT --to-destination "$node_ip:1234"
     sudo netfilter-persistent save >/dev/null 2>&1
@@ -205,9 +208,12 @@ create_node() {
     echo -e "${ORANGE}Спуф IP: $node_ip -> порт $host_port${NC}"
     echo -e "${ORANGE}[*] Bind ноды $idx (--hash=${identity_code})...${NC}"
 
+    # Ждем 10с — чтобы daemon start успел сгенерировать ключ
     sleep 10
+
+    # Пробуем bind
     local BIND_URL="https://api-test1.container1.titannet.io/api/v2/device/binding"
-    # используем /usr/bin/titan-edge => symlink => /usr/local/bin/titan-edge
+    # Обращаемся к /usr/bin/titan-edge
     if ! docker exec "titan_node_$idx" proxychains4 /usr/bin/titan-edge bind --hash="$identity_code" "$BIND_URL" 2>&1; then
         echo -e "${RED}[✗] Bind ошибка. Возможно, ключ не создан или identity неверен${NC}"
     else
@@ -273,7 +279,7 @@ setup_nodes() {
 }
 
 ###############################################################################
-# (7) Меню 3: Проверка статуса 
+# (7) Проверка статуса
 ###############################################################################
 check_status() {
     clear
