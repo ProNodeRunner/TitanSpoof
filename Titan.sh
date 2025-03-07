@@ -259,7 +259,7 @@ if ! docker run -d \
     --memory "${ram_val}g" \
     --memory-swap "$((ram_val * 2))g" \
     --mac-address "$mac" \
-    -p "${host_port}:1234/tcp" \
+    -p "${host_port}:1234/udp" \
     -v "$volume:/root/.titanedge" \
     -e ALL_PROXY="socks5://${proxy_user}:${proxy_pass}@${proxy_host}:${proxy_port}" \
     -e PRELOAD_PROXYCHAINS=1 \
@@ -269,6 +269,7 @@ then
     echo -e "${RED}[✗] Ошибка запуска контейнера titan_node_$idx${NC}"
     return 1
 fi
+
 
 
 
