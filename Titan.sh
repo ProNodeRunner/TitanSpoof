@@ -2,12 +2,9 @@
 ################################################################################
 # TITAN BLOCKCHAIN NODE FINAL INSTALLATION SCRIPT
 # Изменения:
-#   1) Убрано правило «первая нода = порт 1234»
-#   2) В check_status добавлен спуфинг (CPU/RAM/SSD)
-#   3) Комментарий, почему может быть много контейнеров
-#   4) Улучшена очистка (удаление конфига + убиваем дубли)
-#   5) Titan-edge daemon start --token + --port вместо bind
-#   6) Блок systemd-юнита без одинарных кавычек, чтобы избежать EOF ошибки
+#   1) Проверка на одинаковый прокси.
+#   2) titan-edge daemon start --token ... --port ... + /bin/sh -c ... 
+#      (исправляет «No help topic for 'bash'»).
 ################################################################################
 
 ############### 1. Глобальные переменные и цвета ###############
@@ -19,14 +16,14 @@ RED='\033[0;31m'
 NC='\033[0m'
 NETWORK_INTERFACE=$(ip route | grep default | awk '{print $5}' | head -n1)
 
-# Массивы для проверки занятых ключей и портов
+# Для дублирования ключей и прокси
 declare -A USED_KEYS=()
 declare -A USED_PORTS=()
+declare -A USED_PROXIES=()  # <-- Новая проверка на прокси
 
 ############### 2. Отрисовка логотипа, меню, прогресс ###############
 show_logo() {
     local logo
-    # Скачиваем логотип и убираем цветовые коды
     logo=$(curl -sSf "$LOGO_URL" 2>/dev/null | sed -E 's/\x1B\[[0-9;]*[A-Za-z]//g')
     if [[ -z "$logo" ]]; then
         echo "=== TITAN NODE MANAGER v22 ==="
@@ -167,7 +164,8 @@ create_node() {
         return 1
     }
 
-    # Titan: daemon start --token <ключ> --port <порт>
+    # Titan Edge: daemon start
+    # «No help topic for 'bash'» -> используем /bin/sh -c
     if ! docker run -d \
         --name "titan_node_$node_num" \
         --restart unless-stopped \
@@ -181,7 +179,7 @@ create_node() {
         -e http_proxy="http://${proxy_user}:${proxy_pass}@${proxy_host}:${proxy_port}" \
         -e https_proxy="http://${proxy_user}:${proxy_pass}@${proxy_host}:${proxy_port}" \
         nezha123/titan-edge:latest \
-        bash -c "titan-edge daemon start --token ${identity_code} --port ${port} && tail -f /dev/null"; then
+        /bin/sh -c "titan-edge daemon start --token ${identity_code} --port ${port} && tail -f /dev/null"; then
         echo -e "${RED}[✗] Ошибка запуска контейнера${NC}"
         return 1
     fi
@@ -191,12 +189,11 @@ create_node() {
     sudo iptables -t nat -A PREROUTING -i "$NETWORK_INTERFACE" -p udp --dport "$port" -j DNAT --to-destination "$node_ip:$port"
     sudo netfilter-persistent save >/dev/null 2>&1
 
-    # Запись в конфиг: дописываем CPU/RAM/SSD
+    # Запись в конфиг
     echo "${node_num}|${identity_code}|${mac}|${port}|${node_ip}|$(date +%s)|${proxy_host}:${proxy_port}:${proxy_user}:${proxy_pass}|${fake_cpu},${ram_gb},${ssd_gb}" \
         >> "$CONFIG_FILE"
 
-    echo -ne "${ORANGE}Инициализация ноды $node_num..."
-    echo -e " OK!${NC}"
+    echo -e "${ORANGE}Инициализация ноды $node_num... OK! Порт: $port${NC}"
 }
 
 ############### 7. Авто-старт (--auto-start) ###############
@@ -233,14 +230,22 @@ setup_nodes() {
             echo -e "${ORANGE}Укажите прокси в формате: host:port:user:pass${NC} (http-протокол)"
             read -p "Прокси для ноды $i: " proxyInput
 
+            # Проверка дублей прокси
+            if [[ ${USED_PROXIES[$proxyInput]} ]]; then
+                echo -e "${RED}Прокси уже используется!${NC}"
+                continue
+            fi
+
             IFS=':' read -r proxy_host proxy_port proxy_user proxy_pass <<< "$proxyInput"
             if [[ -z "$proxy_host" || -z "$proxy_port" || -z "$proxy_user" || -z "$proxy_pass" ]]; then
                 echo -e "${RED}Неверный формат! Повторите ввод.${NC}"
                 continue
             fi
 
+            # Проверяем, что прокси реально работает
             if check_proxy "$proxy_host" "$proxy_port" "$proxy_user" "$proxy_pass"; then
                 echo -e "${GREEN}Прокси OK: $proxy_host:$proxy_port${NC}"
+                USED_PROXIES[$proxyInput]=1  # Ставим метку, чтобы не повторяли
                 break
             else
                 echo -e "${RED}Прокси недоступно! Повторите ввод.${NC}"
@@ -251,12 +256,13 @@ setup_nodes() {
             read -p "Введите ключ для ноды $i: " key
             local key_upper=${key^^}
 
+            # Проверка дублирования ключа
             if [[ ${USED_KEYS[$key_upper]} ]]; then
                 echo -e "${RED}Ключ уже используется!${NC}"
                 continue
             fi
 
-            # UUID
+            # UUID формат
             if [[ $key_upper =~ ^[A-F0-9]{8}-[A-F0-9]{4}-4[A-F0-9]{3}-[89AB][A-F0-9]{3}-[A-F0-9]{12}$ ]]; then
                 if create_node "$i" "$key_upper" "$proxy_host" "$proxy_port" "$proxy_user" "$proxy_pass"; then
                     USED_KEYS[$key_upper]=1
@@ -320,7 +326,6 @@ restart_nodes() {
         while IFS='|' read -r node_num node_key mac port ip timestamp proxy_data hw_data; do
             local proxy_host proxy_port proxy_user proxy_pass
             IFS=':' read -r proxy_host proxy_port proxy_user proxy_pass <<< "$proxy_data"
-
             create_node "$node_num" "$node_key" "$proxy_host" "$proxy_port" "$proxy_user" "$proxy_pass"
         done < "$CONFIG_FILE"
         echo -e "${GREEN}[✓] Ноды перезапущены!${NC}"
@@ -366,7 +371,6 @@ cleanup() {
 
 ############### 9. Systemd-юнит для автозапуска ###############
 if [ ! -f /etc/systemd/system/titan-node.service ]; then
-    # Пишем без кавычек, чтоб не ломать EOF
     sudo tee /etc/systemd/system/titan-node.service >/dev/null <<EOF
 [Unit]
 Description=Titan Node Service
