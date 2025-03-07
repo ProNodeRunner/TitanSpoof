@@ -256,15 +256,16 @@ if ! docker run -d \
     --restart unless-stopped \
     --cpu-period="$cpu_period" \
     --cpu-quota="$cpu_quota" \
-    --memory "${ram_val}g" \
-    --memory-swap "$((ram_val * 2))g" \
-    --mac-address "$mac" \
+    --memory="${ram_val}g" \
+    --memory-swap="$((ram_val * 2))g" \
+    --mac-address="$mac" \
     -p "${host_port}:1234/udp" \
     -v "$volume:/root/.titanedge" \
     -e ALL_PROXY="socks5://${proxy_user}:${proxy_pass}@${proxy_host}:${proxy_port}" \
     -e PRELOAD_PROXYCHAINS=1 \
     mytitan/proxy-titan-edge:latest \
-    /usr/bin/titan-edge daemon start --init --url=https://cassini-locator.titannet.io:5000/rpc/v0
+    proxychains4 /usr/bin/titan-edge daemon start --init --url=https://cassini-locator.titannet.io:5000/rpc/v0
+
 then
     echo -e "${RED}[✗] Ошибка запуска контейнера titan_node_$idx${NC}"
     return 1
