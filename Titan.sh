@@ -103,6 +103,7 @@ FROM nezha123/titan-edge:latest
 RUN apt update && \
     DEBIAN_FRONTEND=noninteractive apt install -y proxychains4 curl && \
     rm -f /etc/proxychains4.conf && \
+    echo "proxychains4 proxychains4.conf boolean false" | debconf-set-selections && \
     echo "strict_chain" > /etc/proxychains4.conf && \
     echo "proxy_dns" >> /etc/proxychains4.conf && \
     echo "tcp_read_time_out 15000" >> /etc/proxychains4.conf && \
@@ -110,6 +111,7 @@ RUN apt update && \
     echo "[ProxyList]" >> /etc/proxychains4.conf && \
     apt clean && rm -rf /var/lib/apt/lists/*
 EOF
+
 
 
 docker build -t mytitan/proxy-titan-edge-custom .
