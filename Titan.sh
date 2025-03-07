@@ -235,6 +235,9 @@ create_node() {
     local volume="titan_data_$idx"
     docker rm -f "titan_node_$idx" 2>/dev/null
     docker volume create "$volume" >/dev/null
+# Указываем пути к библиотекам перед запуском контейнера
+export PATH=$PATH:/usr/local/titan
+export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/lib
 
     echo -e "${ORANGE}Запуск titan_node_$idx (CPU=$cpu_val, RAM=${ram_val}G), порт=$host_port${NC}"
     if ! docker run -d \
