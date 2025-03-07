@@ -52,38 +52,20 @@ install_dependencies() {
 
     sudo apt-get update -yq && sudo apt-get upgrade -yq
 
-echo -e "${ORANGE}[2/7] Установка пакетов...${NC}"
-   sudo apt-get install -yq \
-    apt-transport-https ca-certificates curl gnupg lsb-release \
-    jq screen cgroup-tools net-tools ccze netcat iptables-persistent bc \
-    ufw git build-essential
-
-# Установка proxychains4 и настройка конфигурации
-echo -e "${ORANGE}[2.5/5] Установка и настройка proxychains4...${NC}"
-sudo apt-get install -y proxychains4
-
-# Создание новой конфигурации для proxychains4
-sudo bash -c 'cat > /etc/proxychains4.conf <<EOL
-strict_chain
-proxy_dns
-tcp_read_time_out 15000
-tcp_connect_time_out 8000
-[ProxyList]
-socks5 $proxy_host $proxy_port $proxy_user $proxy_pass
-EOL'
-
-echo -e "${GREEN}[✓] Proxychains4 установлен и настроен!${NC}"
-
+    echo -e "${ORANGE}[2/7] Установка пакетов...${NC}"
+    sudo apt-get install -yq \
+      apt-transport-https ca-certificates curl gnupg lsb-release \
+      jq screen cgroup-tools net-tools ccze netcat iptables-persistent bc \
+      ufw git build-essential
 
     echo -e "${ORANGE}[3/7] Настройка брандмауэра...${NC}"
     sudo ufw allow 30000:40000/udp || true
     sudo ufw reload || true
 
     echo -e "${ORANGE}[4/7] Установка Docker...${NC}"
-    # Убираем подтверждение
     sudo rm -f /usr/share/keyrings/docker-archive-keyring.gpg
     curl -fsSL https://download.docker.com/linux/ubuntu/gpg | \
-      sudo gpg --batch --yes --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+        sudo gpg --batch --yes --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
 
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] \
 https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
@@ -94,12 +76,20 @@ https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
     sudo systemctl enable --now docker
     sudo usermod -aG docker "$USER"
 
-echo -e "${ORANGE}[5/7] Сборка кастомного Docker-образа с proxychains4...${NC}"
+    echo -e "${ORANGE}[5/7] Извлечение libgoworkerd.so...${NC}"
+    docker create --name temp_titan nezha123/titan-edge:latest
+    docker cp temp_titan:/usr/lib/libgoworkerd.so ./libgoworkerd.so
+    docker rm -f temp_titan
 
-# Создание Dockerfile
-cat > Dockerfile.titan <<EOF
+    if [ ! -f "./libgoworkerd.so" ]; then
+        echo -e "${RED}Ошибка: libgoworkerd.so не найден!${NC}"
+        exit 1
+    fi
+
+    echo -e "${ORANGE}[6/7] Сборка Docker-образа Titan+ProxyChains...${NC}"
+
+    cat > Dockerfile.titan <<EOF
 FROM docker.io/library/ubuntu:22.04
-
 COPY libgoworkerd.so /usr/lib/libgoworkerd.so
 RUN ldconfig
 
@@ -114,112 +104,24 @@ RUN apt update && \
     echo "[ProxyList]" >> /etc/proxychains4.conf
 EOF
 
-# Выполняем сборку образа и проверяем результат
-docker build -t mytitan/proxy-titan-edge-custom -f Dockerfile.titan . || {
-    echo -e "${RED}[✗] Ошибка сборки Docker-образа!${NC}"
-    exit 1
-}
+    docker build -t mytitan/proxy-titan-edge-custom -f Dockerfile.titan . || {
+        echo -e "${RED}[✗] Ошибка сборки Docker-образа!${NC}"
+        exit 1
+    }
 
-sudo docker rm -f titanextract
-chmod +x ./titan-edge
+    docker rm -f temp_titan
+    chmod +x ./titan-edge
 
-# Проверка, скопирован ли бинарник перед сборкой
-if [ ! -f "./titan-edge" ]; then
-    echo -e "${RED}Ошибка: файл titan-edge отсутствует!${NC}"
-    exit 1
-fi
-echo -e "${ORANGE}[5.5/7] Извлечение libgoworkerd.so...${NC}"
-docker create --name temp_titan nezha123/titan-edge:latest
-docker cp temp_titan:/usr/lib/libgoworkerd.so ./libgoworkerd.so
-docker rm -f temp_titan
-
-# Проверяем, скопировалась ли библиотека
-if [ ! -f "./libgoworkerd.so" ]; then
-    echo -e "${RED}Ошибка: libgoworkerd.so не найден!${NC}"
-    exit 1
-fi
-
-echo -e "${ORANGE}[5.9/7] Копируем библиотеку libgoworkerd...${NC}"
-docker cp titanextract:/usr/lib/libgoworkerd.so /usr/local/titan/libgoworkerd.so
-sudo cp /usr/local/titan/libgoworkerd.so /usr/lib/libgoworkerd.so
-sudo ldconfig
-
-
-echo -e "${ORANGE}[6/7] Сборка Docker-образа Titan+ProxyChains...${NC}"
-
-# Проверка, скопирован ли бинарник перед сборкой
-if [ ! -f "./titan-edge" ]; then
-    echo -e "${RED}Ошибка: файл titan-edge отсутствует!${NC}"
-    exit 1
-fi
-
-# 🟢 Сначала создаём Dockerfile!
-cat <<'EOF_DOCKER' > Dockerfile.titan
-FROM ubuntu:22.04
-ENV DEBIAN_FRONTEND=noninteractive
-
-# 🟢 # Копируем библиотеку libgoworkerd в контейнер
-COPY libgoworkerd.so /usr/lib/libgoworkerd.so
-RUN ldconfig
-
-
-
-
-# Копируем извлечённый бинарник
-COPY titan-edge /usr/local/bin/titan-edge
-RUN chmod +x /usr/local/bin/titan-edge && ln -s /usr/local/bin/titan-edge /usr/bin/titan-edge
-
-# ProxyChains config
-RUN echo -e 'strict_chain\nproxy_dns\n[ProxyList]\n' > /etc/proxychains4.conf
-
-COPY run.sh /run.sh
-RUN chmod +x /run.sh
-
-ENV PRELOAD_PROXYCHAINS=1
-EOF_DOCKER
-
-# 🟢 Теперь собираем образ!
-sudo docker build --no-cache -t mytitan/proxy-titan-edge:latest -f Dockerfile.titan . || {
-    echo -e "${RED}[✗] Ошибка сборки Docker-образа!${NC}"
-    exit 1
-}
-
-ENV DEBIAN_FRONTEND=noninteractive
-RUN apt-get update -y && apt-get upgrade -y && \
-    apt-get install -y proxychains4 libproxychains4 libstdc++6 && \
-    rm -rf /var/lib/apt/lists/*
-
-# Копируем извлечённый бинарник
-COPY titan-edge /usr/local/bin/titan-edge
-RUN chmod +x /usr/local/bin/titan-edge && ln -s /usr/local/bin/titan-edge /usr/bin/titan-edge
-
-# ProxyChains config
-RUN echo -e 'strict_chain\nproxy_dns\n[ProxyList]\n' > /etc/proxychains4.conf
-
-COPY run.sh /run.sh
-RUN chmod +x /run.sh
-
-ENV PRELOAD_PROXYCHAINS=1
-ENV LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libproxychains4.so
-EOF_DOCKER
-
-    # run.sh
-    cat <<'EOF_RUN' > run.sh
-#!/bin/bash
-if [ -n "$ALL_PROXY" ]; then
-  proxychains4 titan-edge daemon start &
-else
-  titan-edge daemon start &
-fi
-exec tail -f /dev/null
-EOF_RUN
-
-    sudo docker build -t mytitan/proxy-titan-edge:latest -f Dockerfile.titan .
+    if [ ! -f "./titan-edge" ]; then
+        echo -e "${RED}Ошибка: файл titan-edge отсутствует!${NC}"
+        exit 1
+    fi
 
     echo -e "${ORANGE}[7/7] Завершение установки...${NC}"
     echo -e "${GREEN}[✓] Titan + ProxyChains готово!${NC}"
     sleep 2
 }
+
 
 ###############################################################################
 # (2) Генерация IP, порт, CPU/RAM/SSD
