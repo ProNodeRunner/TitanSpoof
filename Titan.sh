@@ -1,8 +1,11 @@
 #!/bin/bash
 ################################################################################
 # TITAN BLOCKCHAIN NODE FINAL INSTALLATION SCRIPT
-# С включённой логикой генерировать IP в стиле 164.138.10.xxx
-# Все прочие механизмы (уникальные MAC, порты, systemd-автозапуск) сохранены
+# Исправления:
+#   1) Меню снова оранжевое (как прежде).
+#   2) Убрана повторная очистка экрана внутри install_dependencies.
+#   3) Убрано ограничение --cpus, заменено на --cpu-quota (Docker не даёт больше
+#      реальных ядер, поэтому теперь эмулируем 8..32 CPU через cgroups quota).
 ################################################################################
 
 ############### 1. Глобальные переменные и цвета ###############
@@ -17,11 +20,20 @@ NETWORK_INTERFACE=$(ip route | grep default | awk '{print $5}' | head -n1)
 declare -A USED_KEYS=()
 declare -A USED_PORTS=()
 
-############### 2. Функция вывода логотипа и прогресса ###############
+############### 2. Функции отрисовки (логотип, меню, прогресс) ###############
 show_logo() {
     echo -e "${ORANGE}"
     curl -sSf "$LOGO_URL" 2>/dev/null || echo "=== TITAN NODE MANAGER v22 ==="
     echo -e "${NC}"
+}
+
+show_menu() {
+    # Меню в оранжевом цвете
+    clear
+    echo -ne "${ORANGE}"
+    show_logo
+    echo -e "1) Установить компоненты\n2) Создать ноды\n3) Проверить статус\n4) Показать логи\n5) Перезапустить\n6) Очистка\n7) Выход"
+    echo -ne "${NC}"
 }
 
 progress_step() {
@@ -33,7 +45,7 @@ progress_step() {
 
 ############### 3. Установка зависимостей ###############
 install_dependencies() {
-    clear
+    # Без повторного "clear" в конце, чтобы не казалось, что открывается "доп. экран"
     show_logo
 
     progress_step 1 5 "Инициализация системы"
@@ -57,6 +69,7 @@ install_dependencies() {
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] \
 https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
     | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
+
     sudo apt-get update -yq && sudo apt-get install -yq docker-ce docker-ce-cli containerd.io
     sudo systemctl enable --now docker
     sudo usermod -aG docker "$USER"
@@ -64,16 +77,15 @@ https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
     progress_step 5 5 "Установка завершена"
     echo -e "${GREEN}[✓] Система готова!${NC}"
     sleep 1
-    clear
 }
 
 ############### 4. Генерация IP, портов, фейковых профилей ###############
-# 4.1 Генерация адресов вида 164.138.10.xxx
 generate_country_ip() {
+    # Пример: 164.138.10.X
     local first_octet=164
     local second_octet=138
     local third_octet=10
-    local fourth_octet=$(shuf -i 2-254 -n1)  # избегаем .0 и .255
+    local fourth_octet=$(shuf -i 2-254 -n1)
     echo "${first_octet}.${second_octet}.${third_octet}.${fourth_octet}"
 }
 
@@ -91,9 +103,10 @@ generate_random_port() {
 }
 
 generate_realistic_profile() {
+    # CPU: 8..32 (шаг 2); RAM: 32..512GB; SSD: 512..10240GB
     local cpu_values=(8 10 12 14 16 18 20 22 24 26 28 30 32)
     local cpu=${cpu_values[$RANDOM % ${#cpu_values[@]}]}
-    local ram=$((32 + (RANDOM % 16) * 32))    
+    local ram=$((32 + (RANDOM % 16) * 32))
     local ssd=$((512 + (RANDOM % 20) * 512))
     echo "$cpu,$ram,$ssd"
 }
@@ -107,30 +120,37 @@ create_node() {
     local node_num="$1"
     local identity_code="$2"
 
+    # Получаем "фейковые" значения CPU/RAM/SSD
     IFS=',' read -r fake_cpu ram_gb ssd_gb <<< "$(generate_realistic_profile)"
     local port=$(generate_random_port "$node_num")
     local volume="titan_data_$node_num"
     local node_ip=$(generate_country_ip)
     local mac=$(generate_fake_mac)
 
-    local real_cpus=$(nproc)
-    local docker_cpus=$(echo "scale=2; $fake_cpu / ($real_cpus * 4)" | bc)
+    # Вместо --cpus используем --cpu-quota= X * 100000 (эмулируем 8..32 ядер)
+    # period=100000 микросекунд = 0.1s; quota=число_ядер * period
+    local cpu_period=100000
+    local cpu_quota=$((fake_cpu*cpu_period*1))  # 8 CPU => 800000, 32 => 3200000 и т.д.
 
     docker rm -f "titan_node_$node_num" 2>/dev/null
+
     docker volume create "$volume" >/dev/null || {
         echo -e "${RED}[✗] Ошибка создания тома $volume${NC}"
         return 1
     }
 
+    # Ключ в том
     echo "$identity_code" | docker run -i --rm -v "$volume:/data" busybox sh -c "cat > /data/identity.key" || {
         echo -e "${RED}[✗] Ошибка записи ключа${NC}"
         return 1
     }
 
+    # Запуск контейнера
     if ! docker run -d \
         --name "titan_node_$node_num" \
         --restart unless-stopped \
-        --cpus "$docker_cpus" \
+        --cpu-period="$cpu_period" \
+        --cpu-quota="$cpu_quota" \
         --memory "${ram_gb}g" \
         --storage-opt "size=${ssd_gb}g" \
         --mac-address "$mac" \
@@ -175,15 +195,8 @@ auto_start_nodes() {
 }
 
 ############### 7. Меню и функции управления ###############
-show_menu() {
-    clear
-    show_logo
-    echo -e "1) Установить компоненты\n2) Создать ноды\n3) Проверить статус\n4) Показать логи\n5) Перезапустить\n6) Очистка\n7) Выход"
-}
-
 setup_nodes() {
     local node_count
-
     while true; do
         read -p "Введите количество нод: " node_count
         [[ "$node_count" =~ ^[1-9][0-9]*$ ]] && break
@@ -200,6 +213,7 @@ setup_nodes() {
                 continue
             fi
 
+            # Проверяем формат UUID
             if [[ $key_upper =~ ^[A-F0-9]{8}-[A-F0-9]{4}-4[A-F0-9]{3}-[89AB][A-F0-9]{3}-[A-F0-9]{12}$ ]]; then
                 if create_node "$i" "$key_upper"; then
                     USED_KEYS[$key_upper]=1
@@ -215,7 +229,6 @@ setup_nodes() {
 
     echo -e "\n${GREEN}Создано нод: ${node_count}${NC}"
     read -p $'\nНажмите любую клавишу...' -n1 -s
-    clear
 }
 
 check_status() {
@@ -230,10 +243,10 @@ check_status() {
         fi
         printf "%-20s | %-17s | %-15s | %-15s | %b\n" "$container_name" "$mac" "$port" "$ip" "$status"
     done < "$CONFIG_FILE"
+
     echo -e "\n${ORANGE}РЕСУРСЫ:${NC}"
     docker stats --no-stream --format "{{.Name}}: {{.CPUPerc}} CPU / {{.MemUsage}}" | grep "titan_node"
     read -p $'\nНажмите любую клавишу...' -n1 -s
-    clear
 }
 
 show_logs() {
@@ -246,7 +259,6 @@ show_logs() {
         echo "$logs"
     fi
     read -p $'\nНажмите любую клавишу...' -n1 -s
-    clear
 }
 
 restart_nodes() {
@@ -285,6 +297,7 @@ cleanup() {
     while IFS='|' read -r node_num node_key mac port ip timestamp; do
         sudo ip addr del "$ip/24" dev "$NETWORK_INTERFACE" 2>/dev/null
     done < "$CONFIG_FILE"
+
     sudo iptables -t nat -F && sudo iptables -t mangle -F
     sudo netfilter-persistent save >/dev/null 2>&1
 
@@ -293,7 +306,6 @@ cleanup() {
 
     echo -e "\n${GREEN}[✓] Все следы удалены! Перезагрузите сервер.${NC}"
     sleep 3
-    clear
 }
 
 ############### 8. systemd-юнит для автозапуска ###############
@@ -326,6 +338,7 @@ case $1 in
             case $choice in
                 1) install_dependencies ;;
                 2)
+                    # Проверяем наличие Docker и jq
                     if ! command -v docker &>/dev/null || [ ! -f "/usr/bin/jq" ]; then
                         echo -e "\n${RED}ОШИБКА: Сначала установите компоненты (пункт 1)!${NC}"
                         sleep 2
