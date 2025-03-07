@@ -112,7 +112,8 @@ RUN apt update && \
     echo "proxy_dns" >> /etc/proxychains4.conf && \
     echo "tcp_read_time_out 15000" >> /etc/proxychains4.conf && \
     echo "tcp_connect_time_out 8000" >> /etc/proxychains4.conf && \
-    echo "[ProxyList]" >> /etc/proxychains4.conf
+    echo "[ProxyList]" >> /etc/proxychains4.conf && \
+    echo "socks5 $proxy_host $proxy_port $proxy_user $proxy_pass" >> /etc/proxychains4.conf
 EOF
 
 # Собираем кастомный образ
