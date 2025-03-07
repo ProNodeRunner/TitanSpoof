@@ -77,11 +77,11 @@ https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
     sudo systemctl enable --now docker
     sudo usermod -aG docker "$USER"
 
-    echo -e "${ORANGE}[5/7] Извлечение titan-edge из nezha123/titan-edge...${NC}"
 echo -e "${ORANGE}[5/7] Извлечение бинарника titan-edge...${NC}"
 sudo docker pull nezha123/titan-edge:latest
 sudo docker rm -f titanextract 2>/dev/null
-sudo docker create --name titanextract nezha123/titan-edge:latest sleep 10
+sudo docker create --name titanextract nezha123/titan-edge:latest
+sudo docker start titanextract  # 🟢 Запускаем контейнер
 sleep 5  # Даем контейнеру запуститься
 sudo docker cp titanextract:/usr/bin/titan-edge ./titan-edge || {
     echo -e "${RED}Ошибка: titan-edge не найден в контейнере!${NC}"
@@ -90,8 +90,7 @@ sudo docker cp titanextract:/usr/bin/titan-edge ./titan-edge || {
 }
 sudo docker rm -f titanextract
 chmod +x ./titan-edge
-    sudo docker rm -f titanextract
-    sudo chmod +x titan-edge
+
 
     echo -e "${ORANGE}[6/7] Сборка Docker-образа Titan+ProxyChains...${NC}"
 
@@ -101,12 +100,16 @@ if [ ! -f "./titan-edge" ]; then
     exit 1
 fi
 
-sudo docker build --no-cache -t mytitan/proxy-titan-edge:latest -f Dockerfile.titan . || {
-    echo -e "${RED}[✗] Ошибка сборки Docker-образа!${NC}"
-    exit 1
-}
+echo -e "${ORANGE}[6/7] Сборка Docker-образа Titan+ProxyChains...${NC}"
 
-    cat <<'EOF_DOCKER' > Dockerfile.titan
+# Проверка, скопирован ли бинарник перед сборкой
+if [ ! -f "./titan-edge" ]; then
+    echo -e "${RED}Ошибка: файл titan-edge отсутствует!${NC}"
+    exit 1
+fi
+
+# 🟢 Сначала создаём Dockerfile!
+cat <<'EOF_DOCKER' > Dockerfile.titan
 FROM ubuntu:22.04
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update -y && apt-get upgrade -y && \
@@ -114,7 +117,32 @@ RUN apt-get update -y && apt-get upgrade -y && \
     rm -rf /var/lib/apt/lists/*
 
 # Копируем извлечённый бинарник
-COPY titan-edge /usr/bin/titan-edge
+COPY titan-edge /usr/local/bin/titan-edge
+RUN chmod +x /usr/local/bin/titan-edge && ln -s /usr/local/bin/titan-edge /usr/bin/titan-edge
+
+# ProxyChains config
+RUN echo -e 'strict_chain\nproxy_dns\n[ProxyList]\n' > /etc/proxychains4.conf
+
+COPY run.sh /run.sh
+RUN chmod +x /run.sh
+
+ENV PRELOAD_PROXYCHAINS=1
+ENV LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libproxychains4.so
+EOF_DOCKER
+
+# 🟢 Теперь собираем образ!
+sudo docker build --no-cache -t mytitan/proxy-titan-edge:latest -f Dockerfile.titan . || {
+    echo -e "${RED}[✗] Ошибка сборки Docker-образа!${NC}"
+    exit 1
+}
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update -y && apt-get upgrade -y && \
+    apt-get install -y proxychains4 libproxychains4 libstdc++6 && \
+    rm -rf /var/lib/apt/lists/*
+
+# Копируем извлечённый бинарник
+COPY titan-edge /usr/local/bin/titan-edge
 RUN chmod +x /usr/local/bin/titan-edge && ln -s /usr/local/bin/titan-edge /usr/bin/titan-edge
 
 # ProxyChains config
