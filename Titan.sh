@@ -85,17 +85,12 @@ sudo docker create --name titanextract nezha123/titan-edge:latest sleep 10
 sleep 5  # Даем контейнеру запуститься
 sudo docker cp titanextract:/usr/bin/titan-edge ./titan-edge || {
     echo -e "${RED}Ошибка: titan-edge не найден в контейнере!${NC}"
-    sudo docker rm titanextract
+    sudo docker rm -f titanextract
     exit 1
 }
 sudo docker rm -f titanextract
 chmod +x ./titan-edge
-  {
-        echo -e "${RED}Не удалось скопировать /usr/local/bin/titan-edge из образа nezha123/titan-edge!${NC}"
-        sudo docker rm titanextract
-        return 1
-    }
-    sudo docker rm titanextract
+    sudo docker rm -f titanextract
     sudo chmod +x titan-edge
 
     echo -e "${ORANGE}[6/7] Сборка Docker-образа Titan+ProxyChains...${NC}"
