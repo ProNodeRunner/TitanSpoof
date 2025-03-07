@@ -88,10 +88,15 @@ https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
 
     echo -e "${ORANGE}[6/7] Сборка Docker-образа Titan+ProxyChains...${NC}"
 
-    cat > Dockerfile.titan <<EOF
+cat > Dockerfile.titan <<EOF
 FROM docker.io/library/ubuntu:22.04
+
 COPY libgoworkerd.so /usr/lib/libgoworkerd.so
+COPY titan-edge /usr/bin/titan-edge
+
 RUN ldconfig
+RUN chmod +x /usr/bin/titan-edge
+
 
 RUN apt update && \
     DEBIAN_FRONTEND=noninteractive apt install -y proxychains4 curl && \
