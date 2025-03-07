@@ -53,10 +53,11 @@ install_dependencies() {
     sudo apt-get update -yq && sudo apt-get upgrade -yq
 
 echo -e "${ORANGE}[2/7] Установка пакетов...${NC}"
-    sudo apt-get install -yq \
-      apt-transport-https ca-certificates curl gnupg lsb-release \
-      jq screen cgroup-tools net-tools ccze netcat iptables-persistent bc \
-      ufw git build-essential
+   sudo apt-get install -yq \
+    apt-transport-https ca-certificates curl gnupg lsb-release \
+    jq screen cgroup-tools net-tools ccze netcat iptables-persistent bc \
+    ufw git build-essential
+
 
 
     echo -e "${ORANGE}[3/7] Настройка брандмауэра...${NC}"
@@ -102,6 +103,7 @@ docker cp titanextract:/usr/lib/libgoworkerd.so /usr/local/titan/libgoworkerd.so
 sudo cp /usr/local/titan/libgoworkerd.so /usr/lib/libgoworkerd.so
 sudo ldconfig
 
+
 echo -e "${ORANGE}[6/7] Сборка Docker-образа Titan+ProxyChains...${NC}"
 
 # Проверка, скопирован ли бинарник перед сборкой
@@ -115,9 +117,10 @@ cat <<'EOF_DOCKER' > Dockerfile.titan
 FROM ubuntu:22.04
 ENV DEBIAN_FRONTEND=noninteractive
 
-# 🟢 Настройка библиотеки libgoworkerd
+# 🟢 # Копируем библиотеку libgoworkerd в контейнер
 COPY libgoworkerd.so /usr/lib/libgoworkerd.so
 RUN ldconfig
+
 
 
 
