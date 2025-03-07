@@ -98,6 +98,17 @@ if [ ! -f "./titan-edge" ]; then
     echo -e "${RED}Ошибка: файл titan-edge отсутствует!${NC}"
     exit 1
 fi
+echo -e "${ORANGE}[5.5/7] Извлечение libgoworkerd.so...${NC}"
+docker create --name temp_titan nezha123/titan-edge:latest
+docker cp temp_titan:/usr/lib/libgoworkerd.so ./libgoworkerd.so
+docker rm -f temp_titan
+
+# Проверяем, скопировалась ли библиотека
+if [ ! -f "./libgoworkerd.so" ]; then
+    echo -e "${RED}Ошибка: libgoworkerd.so не найден!${NC}"
+    exit 1
+fi
+
 echo -e "${ORANGE}[6/7] Копируем библиотеку libgoworkerd...${NC}"
 docker cp titanextract:/usr/lib/libgoworkerd.so /usr/local/titan/libgoworkerd.so
 sudo cp /usr/local/titan/libgoworkerd.so /usr/lib/libgoworkerd.so
