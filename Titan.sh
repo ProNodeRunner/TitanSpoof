@@ -122,10 +122,8 @@ RUN apt update && \
     echo "proxy_dns" >> /etc/proxychains4.conf && \
     echo "tcp_read_time_out 15000" >> /etc/proxychains4.conf && \
     echo "tcp_connect_time_out 8000" >> /etc/proxychains4.conf && \
-    echo "[ProxyList]" >> /etc/proxychains4.conf
-
-# Устанавливаем proxy через переменные окружения (ENV)
-RUN bash -c 'echo "socks5 ${PROXY_HOST} ${PROXY_PORT} ${PROXY_USER} ${PROXY_PASS}" >> /etc/proxychains4.conf'
+    echo "[ProxyList]" >> /etc/proxychains4.conf && \
+    echo "socks5 ${PROXY_HOST} ${PROXY_PORT} ${PROXY_USER} ${PROXY_PASS}" >> /etc/proxychains4.conf
 EOF
 
 # Собираем кастомный образ
@@ -231,7 +229,7 @@ if ! docker run -d \
     -e PRELOAD_PROXYCHAINS=1 \
     -e PROXYCHAINS_CONF_PATH="/etc/proxychains4.conf" \
     mytitan/proxy-titan-edge-custom \
-   bash -c "export LD_PRELOAD=/usr/lib/libproxychains4.so && proxychains4 /usr/bin/titan-edge daemon start --init --url=https://cassini-locator.titannet.io:5000/rpc/v0"
+   bash -c "export LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libproxychains.so.4 && proxychains4 /usr/bin/titan-edge daemon start --init --url=https://cassini-locator.titannet.io:5000/rpc/v0"
 then
     echo -e "${RED}[✗] Ошибка запуска контейнера titan_node_$idx${NC}"
     return 1
