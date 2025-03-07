@@ -1,9 +1,9 @@
 #!/bin/bash
 ################################################################################
 # TITAN BLOCKCHAIN NODE FINAL INSTALLATION SCRIPT
-# Изменения:
-#   - Добавлен ufw для брандмауэра
-#   - Цикл ожидания строки "Edge registered successfully" вместо "Ready"
+#   - Установка ufw для брандмауэра
+#   - Во время инициализации ноды выводим логи (docker logs -f) до строки
+#     "Edge registered successfully"
 ################################################################################
 
 ############### 1. Глобальные переменные и цвета ###############
@@ -31,7 +31,7 @@ show_logo() {
 
 show_menu() {
     clear
-    tput setaf 3 # Оранжевый цвет
+    tput setaf 3
     show_logo
     echo -e "1) Установить компоненты\n2) Создать ноды\n3) Проверить статус\n4) Показать логи\n5) Перезапустить\n6) Очистка\n7) Выход"
     tput sgr0
@@ -155,13 +155,12 @@ create_node() {
         return 1
     }
 
-    # Запись ключа
     echo "$identity_code" | docker run -i --rm -v "$volume:/data" busybox sh -c "cat > /data/identity.key" || {
         echo -e "${RED}[✗] Ошибка записи ключа${NC}"
         return 1
     }
 
-    # Запуск контейнера
+    # Запускаем контейнер
     if ! docker run -d \
         --name "titan_node_$node_num" \
         --restart unless-stopped \
@@ -185,17 +184,20 @@ create_node() {
     sudo iptables -t nat -A PREROUTING -i "$NETWORK_INTERFACE" -p udp --dport "$port" -j DNAT --to-destination "$node_ip:$port"
     sudo netfilter-persistent save >/dev/null 2>&1
 
-    # Запись в конфиг
+    # Сохраняем конфиг
     echo "${node_num}|${identity_code}|${mac}|${port}|${node_ip}|$(date +%s)|${proxy_host}:${proxy_port}:${proxy_user}:${proxy_pass}" \
         >> "$CONFIG_FILE"
 
-    # Цикл ожидания строки "Edge registered successfully"
-    echo -ne "${ORANGE}Инициализация ноды $node_num..."
-    while ! docker logs "titan_node_$node_num" 2>&1 | grep -q "Edge registered successfully"; do
-        sleep 5
-        echo -n "."
+    # Печатаем "живые" логи, пока не встретим "Edge registered successfully"
+    echo -e "${ORANGE}Инициализация ноды $node_num (живые логи, ждем \"Edge registered successfully\"):${NC}"
+    docker logs -f "titan_node_$node_num" 2>&1 | while read line; do
+        echo "$line"
+        if [[ "$line" == *"Edge registered successfully"* ]]; then
+            echo -e "${GREEN}OK! Нода $node_num зарегистрирована.${NC}"
+            pkill -P $$ docker  # Завершаем дочерний процесс logs -f
+            break
+        fi
     done
-    echo -e "${GREEN} OK!${NC}"
 }
 
 ############### 7. Авто-старт (--auto-start) ###############
@@ -299,7 +301,7 @@ show_logs() {
         echo "$logs" | ccze -A
     else
         echo "$logs"
-    fi
+    }
     read -p $'\nНажмите любую клавишу...' -n1 -s
 }
 
