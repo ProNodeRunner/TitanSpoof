@@ -1,6 +1,9 @@
 #!/bin/bash
 ################################################################################
 # TITAN BLOCKCHAIN NODE FINAL INSTALLATION SCRIPT
+# Изменения:
+#   - Добавлен ufw для брандмауэра
+#   - Цикл ожидания строки "Edge registered successfully" вместо "Ready"
 ################################################################################
 
 ############### 1. Глобальные переменные и цвета ###############
@@ -18,7 +21,7 @@ declare -A USED_PORTS=()
 ############### 2. Отрисовка логотипа, меню, прогресс ###############
 show_logo() {
     local logo
-    logo=$(curl -sSf "$LOGO_URL" 2>/dev/null | sed -E 's/\x1B\[[0-9;]*[A-Za-z]//g')
+    logo=$(curl -sSf "$LOGO_URL" 2>/dev/null | sed -E 's/\\x1B\\[[0-9;]*[A-Za-z]//g')
     if [[ -z "$logo" ]]; then
         echo "=== TITAN NODE MANAGER v22 ==="
     else
@@ -53,7 +56,7 @@ install_dependencies() {
     sudo apt-get install -yq \
         apt-transport-https ca-certificates curl gnupg lsb-release \
         jq screen cgroup-tools net-tools ccze netcat iptables-persistent bc \
-        ufw  # <-- Добавили установку ufw
+        ufw
 
     progress_step 3 5 "Настройка брандмауэра"
     sudo ufw allow 1234/udp
@@ -75,7 +78,7 @@ https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
     sleep 1
 }
 
-############### 4. Генерация IP, портов ###############
+############### 4. Генерация IP, портов, профилей ###############
 generate_country_ip() {
     local first_octet=164
     local second_octet=138
@@ -152,11 +155,13 @@ create_node() {
         return 1
     }
 
+    # Запись ключа
     echo "$identity_code" | docker run -i --rm -v "$volume:/data" busybox sh -c "cat > /data/identity.key" || {
         echo -e "${RED}[✗] Ошибка записи ключа${NC}"
         return 1
     }
 
+    # Запуск контейнера
     if ! docker run -d \
         --name "titan_node_$node_num" \
         --restart unless-stopped \
@@ -175,15 +180,17 @@ create_node() {
         return 1
     fi
 
+    # Настройка сети
     sudo ip addr add "${node_ip}/24" dev "$NETWORK_INTERFACE" 2>/dev/null
     sudo iptables -t nat -A PREROUTING -i "$NETWORK_INTERFACE" -p udp --dport "$port" -j DNAT --to-destination "$node_ip:$port"
     sudo netfilter-persistent save >/dev/null 2>&1
 
+    # Запись в конфиг
     echo "${node_num}|${identity_code}|${mac}|${port}|${node_ip}|$(date +%s)|${proxy_host}:${proxy_port}:${proxy_user}:${proxy_pass}" \
         >> "$CONFIG_FILE"
 
+    # Цикл ожидания строки "Edge registered successfully"
     echo -ne "${ORANGE}Инициализация ноды $node_num..."
-    # Вместо "Ready" используем "Edge registered successfully" (из лога)
     while ! docker logs "titan_node_$node_num" 2>&1 | grep -q "Edge registered successfully"; do
         sleep 5
         echo -n "."
