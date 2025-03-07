@@ -109,6 +109,7 @@ RUN apt update && \
     echo "tcp_connect_time_out 8000" >> /etc/proxychains4.conf && \
     echo "[ProxyList]" >> /etc/proxychains4.conf && \
     apt clean && rm -rf /var/lib/apt/lists/*
+EOF
 
 docker build -t mytitan/proxy-titan-edge-custom .
 
