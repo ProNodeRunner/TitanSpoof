@@ -1,10 +1,10 @@
 #!/bin/bash
 ################################################################################
 # TITAN BLOCKCHAIN NODE FINAL INSTALLATION SCRIPT
-# (ProxyChains + Socks5 + Titan) + Extract titan-edge from official container
+# (ProxyChains + Socks5 + Titan) + multi-stage build to extract Titan Edge from nezha123/titan-edge
 #
-# Решает “proxychains: can't load process 'titan-edge': No such file or directory”
-# тем, что извлекаем бинарник из nezha123/titan-edge:latest
+# Решает ошибку "Cannot connect to the Docker daemon ..." при RUN docker pull ...
+# через многоступенчатую сборку "FROM nezha123/titan-edge:latest AS titan"
 ################################################################################
 
 CONFIG_FILE="/etc/titan_nodes.conf"
@@ -21,6 +21,9 @@ declare -A USED_KEYS=()
 declare -A USED_PORTS=()
 declare -A USED_PROXIES=()
 
+###############################################################################
+# (A) Логотип/меню
+###############################################################################
 show_logo() {
     local raw
     raw=$(curl -sSf "$LOGO_URL" 2>/dev/null | sed -E 's/\x1B\[[0-9;]*[A-Za-z]//g')
@@ -40,7 +43,7 @@ show_menu() {
 }
 
 ###############################################################################
-# (1) install_dependencies
+# (1) Установка компонентов (Docker + build)
 ###############################################################################
 install_dependencies() {
     echo -e "${ORANGE}[1/6] Инициализация системы...${NC}"
@@ -52,9 +55,9 @@ install_dependencies() {
 
     echo -e "${ORANGE}[2/6] Установка пакетов...${NC}"
     sudo apt-get install -yq \
-      apt-transport-https ca-certificates curl gnupg lsb-release \
-      jq screen cgroup-tools net-tools ccze netcat iptables-persistent bc \
-      ufw git build-essential
+        apt-transport-https ca-certificates curl gnupg lsb-release \
+        jq screen cgroup-tools net-tools ccze netcat iptables-persistent bc \
+        ufw git build-essential
 
     echo -e "${ORANGE}[3/6] Настройка брандмауэра...${NC}"
     sudo ufw allow 30000:40000/udp || true
@@ -63,37 +66,39 @@ install_dependencies() {
     echo -e "${ORANGE}[4/6] Установка Docker...${NC}"
     sudo rm -f /usr/share/keyrings/docker-archive-keyring.gpg
     curl -fsSL https://download.docker.com/linux/ubuntu/gpg | \
-      sudo gpg --batch --yes --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+        sudo gpg --batch --yes --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
 
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] \
 https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
-      | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
+        | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
 
     sudo apt-get update -yq
     sudo apt-get install -yq docker-ce docker-ce-cli containerd.io
     sudo systemctl enable --now docker
     sudo usermod -aG docker "$USER"
 
-    echo -e "${ORANGE}[5/6] Сборка Docker-образа Titan+ProxyChains...${NC}"
+    echo -e "${ORANGE}[5/6] Сборка Docker-образа Titan+ProxyChains (multi-stage)...${NC}"
+    # Dockerfile
     cat <<'EOF_DOCKER' > Dockerfile.titan
-FROM ubuntu:22.04
+# --- STAGE 1: extract from nezha123/titan-edge
+FROM nezha123/titan-edge:latest AS titan
 
+# --- STAGE 2: build final
+FROM ubuntu:22.04
 ENV DEBIAN_FRONTEND=noninteractive
+
+# Install dependencies
 RUN apt-get update -y && apt-get upgrade -y && \
-    apt-get install -y proxychains4 libproxychains4 wget ca-certificates docker.io libstdc++6 && \
+    apt-get install -y proxychains4 libproxychains4 wget ca-certificates libstdc++6 && \
     rm -rf /var/lib/apt/lists/*
 
-# 1) Pull official Titan Edge container
-RUN docker pull nezha123/titan-edge:latest
+# Copy from stage1
+COPY --from=titan /usr/local/bin/titan-edge /usr/local/bin/titan-edge
 
-# 2) Extract titan-edge binary from that container
-RUN docker create --name extract nezha123/titan-edge:latest
-RUN docker cp extract:/usr/local/bin/titan-edge /usr/local/bin/titan-edge || true
-RUN docker rm extract
-RUN chmod +x /usr/local/bin/titan-edge
-RUN ln -s /usr/local/bin/titan-edge /usr/bin/titan-edge
+# Ensure file is executable
+RUN chmod +x /usr/local/bin/titan-edge && ln -s /usr/local/bin/titan-edge /usr/bin/titan-edge
 
-# 3) Setup proxychains conf
+# ProxyChains config
 RUN echo -e 'strict_chain\nproxy_dns\n[ProxyList]\n' > /etc/proxychains4.conf
 
 COPY run.sh /run.sh
@@ -103,9 +108,9 @@ ENV PRELOAD_PROXYCHAINS=1
 ENTRYPOINT ["/run.sh"]
 EOF_DOCKER
 
+    # run.sh
     cat <<'EOF_RUN' > run.sh
 #!/bin/bash
-# Start Titan Edge in background, keep container alive
 if [ "$PRELOAD_PROXYCHAINS" = "1" ] && [ -n "$ALL_PROXY" ]; then
   export LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libproxychains4.so
   proxychains4 titan-edge daemon start &
@@ -123,14 +128,14 @@ EOF_RUN
 }
 
 ###############################################################################
-# (2) Генерация IP, портов, CPU/RAM/SSD
+# (2) Генерация IP, порт, CPU/RAM/SSD
 ###############################################################################
 generate_country_ip() {
     local first_octet=164
     local second_octet=138
     local third_octet=10
-    local fourth_octet=$(shuf -i 2-254 -n1)
-    echo "${first_octet}.${second_octet}.${third_octet}.${fourth_octet}"
+    local fourth=$(shuf -i 2-254 -n1)
+    echo "${first_octet}.${second_octet}.${third_octet}.${fourth}"
 }
 
 generate_random_port() {
@@ -197,7 +202,6 @@ create_node() {
         return 1
     fi
 
-    # Спуф IP
     sudo ip addr add "${node_ip}/24" dev "$NETWORK_INTERFACE" 2>/dev/null
     sudo iptables -t nat -A PREROUTING -p udp --dport "$host_port" -j DNAT --to-destination "$node_ip:1234"
     sudo netfilter-persistent save >/dev/null 2>&1
@@ -208,12 +212,8 @@ create_node() {
     echo -e "${ORANGE}Спуф IP: $node_ip -> порт $host_port${NC}"
     echo -e "${ORANGE}[*] Bind ноды $idx (--hash=${identity_code})...${NC}"
 
-    # Ждем 10с — чтобы daemon start успел сгенерировать ключ
     sleep 10
-
-    # Пробуем bind
     local BIND_URL="https://api-test1.container1.titannet.io/api/v2/device/binding"
-    # Обращаемся к /usr/bin/titan-edge
     if ! docker exec "titan_node_$idx" proxychains4 /usr/bin/titan-edge bind --hash="$identity_code" "$BIND_URL" 2>&1; then
         echo -e "${RED}[✗] Bind ошибка. Возможно, ключ не создан или identity неверен${NC}"
     else
@@ -226,7 +226,7 @@ setup_nodes() {
     while true; do
         read -p "Сколько нод создать: " node_count
         [[ "$node_count" =~ ^[1-9][0-9]*$ ]] && break
-        echo -e "${RED}Введите число >0!${NC}"
+        echo -e "${RED}Введите число > 0!${NC}"
     done
 
     for ((i=1; i<=node_count; i++)); do
@@ -273,13 +273,12 @@ setup_nodes() {
             fi
         done
     done
-
     echo -e "${GREEN}\nСоздано нод: ${node_count}${NC}"
     read -p $'\nНажмите любую клавишу...' -n1 -s
 }
 
 ###############################################################################
-# (7) Проверка статуса
+# (4) Проверка статуса
 ###############################################################################
 check_status() {
     clear
@@ -320,7 +319,7 @@ check_status() {
 }
 
 ###############################################################################
-# (8) Логи (последние 5 строк) всех нод
+# (5) Логи (последние 5 строк) всех нод
 ###############################################################################
 show_logs() {
     clear
@@ -342,7 +341,7 @@ show_logs() {
 }
 
 ###############################################################################
-# (9) Перезапуск, Очистка, автозапуск
+# (6) Перезапуск, Очистка, автозапуск
 ###############################################################################
 restart_nodes() {
     echo -e "${ORANGE}[*] Перезапуск нод...${NC}"
@@ -395,6 +394,7 @@ cleanup() {
     sleep 3
 }
 
+# systemd unit
 if [ ! -f /etc/systemd/system/titan-node.service ]; then
     sudo tee /etc/systemd/system/titan-node.service >/dev/null <<EOF
 [Unit]
@@ -417,6 +417,7 @@ auto_start_nodes() {
         echo -e "${RED}Нет $CONFIG_FILE, автозапуск невозможен!${NC}"
         exit 1
     fi
+
     while IFS='|' read -r idx code mac hport fip stamp pxy hw; do
         local proxy_host proxy_port proxy_user proxy_pass
         IFS=':' read -r proxy_host proxy_port proxy_user proxy_pass <<< "$pxy"
