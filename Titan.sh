@@ -243,6 +243,11 @@ create_node() {
 sleep 15  # Даем время контейнеру запуститься
 
 local BIND_URL="https://api-test1.container1.titannet.io/api/v2/device/binding"
+echo -e "${ORANGE}[*] Ожидание запуска контейнера titan_node_$idx...${NC}"
+sleep 15  # Даем время контейнеру запуститься
+
+local BIND_URL="https://api-test1.container1.titannet.io/api/v2/device/binding"
+
 if docker exec "titan_node_$idx" proxychains4 /usr/bin/titan-edge bind --hash="$identity_code" "$BIND_URL"; then
     echo -e "${GREEN}[✓] Bind OK для ноды $idx${NC}"
 else
@@ -250,9 +255,7 @@ else
     echo -e "${RED}Проверяем логи контейнера...${NC}"
     docker logs --tail 10 "titan_node_$idx"
 fi
-    else
-        echo -e "${GREEN}[✓] Bind OK для ноды $idx${NC}"
-    fi
+
 }
 
 setup_nodes() {
