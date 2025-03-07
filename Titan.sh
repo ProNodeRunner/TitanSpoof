@@ -107,13 +107,13 @@ RUN chmod +x /usr/local/bin/titan-edge && ln -s /usr/local/bin/titan-edge /usr/b
 RUN apt update && \
     DEBIAN_FRONTEND=noninteractive apt install -y proxychains4 curl && \
     echo "proxychains4 proxychains4.conf boolean false" | debconf-set-selections && \
-    rm -f /etc/proxychains4.conf && \
+    rm -f /etc/proxychains4.conf && \  # <--- ВАЖНО! Удаляем старый конфиг
     echo "strict_chain" > /etc/proxychains4.conf && \
     echo "proxy_dns" >> /etc/proxychains4.conf && \
     echo "tcp_read_time_out 15000" >> /etc/proxychains4.conf && \
     echo "tcp_connect_time_out 8000" >> /etc/proxychains4.conf && \
     echo "[ProxyList]" >> /etc/proxychains4.conf && \
-    echo "DEBUG: socks5 $proxy_host $proxy_port $proxy_user $proxy_pass"
+    echo "DEBUG: socks5 $proxy_host $proxy_port $proxy_user $proxy_pass" && \
     echo "socks5 $proxy_host $proxy_port $proxy_user $proxy_pass" >> /etc/proxychains4.conf || exit 1
 EOF
 
