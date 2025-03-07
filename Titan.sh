@@ -53,10 +53,11 @@ install_dependencies() {
     sudo apt-get update -yq && sudo apt-get upgrade -yq
 
 echo -e "${ORANGE}[2/7] Установка пакетов...${NC}"
-sudo apt-get install -yq \
-  apt-transport-https ca-certificates curl gnupg lsb-release \
-  jq screen cgroup-tools net-tools ccze netcat iptables-persistent bc \
-  ufw git build-essential libgoworkerd-dev libgoworkerd1
+    sudo apt-get install -yq \
+      apt-transport-https ca-certificates curl gnupg lsb-release \
+      jq screen cgroup-tools net-tools ccze netcat iptables-persistent bc \
+      ufw git build-essential
+
 
     echo -e "${ORANGE}[3/7] Настройка брандмауэра...${NC}"
     sudo ufw allow 30000:40000/udp || true
