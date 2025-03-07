@@ -1,9 +1,8 @@
 #!/bin/bash
 ################################################################################
 # TITAN BLOCKCHAIN NODE FINAL INSTALLATION SCRIPT (ProxyChains + Socks5 + Titan)
-#
-# - Исправлено: “proxychains: can't load process 'titan-edge'” => 
-#   гарантируем /usr/local/bin/titan-edge + PATH в Dockerfile + run.sh
+# Resolves "proxychains: can't load process 'titan-edge': No such file or directory"
+# by ensuring /usr/bin/titan-edge exists, is x86_64, and is in PATH.
 ################################################################################
 
 CONFIG_FILE="/etc/titan_nodes.conf"
@@ -39,7 +38,7 @@ show_menu() {
 }
 
 ###############################################################################
-# (1) install_dependencies: Установка Docker, сборка image “mytitan/proxy-titan-edge”
+# (1) install_dependencies: Установка Docker, сборка mytitan/proxy-titan-edge
 ###############################################################################
 install_dependencies() {
     echo -e "${ORANGE}[1/6] Инициализация системы...${NC}"
@@ -60,7 +59,6 @@ install_dependencies() {
     sudo ufw reload || true
 
     echo -e "${ORANGE}[4/6] Установка Docker...${NC}"
-    # Удаляем keyring, чтобы не спрашивало подтверждения
     sudo rm -f /usr/share/keyrings/docker-archive-keyring.gpg
     curl -fsSL https://download.docker.com/linux/ubuntu/gpg | \
       sudo gpg --batch --yes --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
@@ -80,25 +78,22 @@ FROM ubuntu:22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update -y && apt-get upgrade -y && \
-    apt-get install -y proxychains4 libproxychains4 wget ca-certificates docker.io && \
+    apt-get install -y proxychains4 libproxychains4 wget ca-certificates docker.io libstdc++6 && \
     rm -rf /var/lib/apt/lists/*
 
 # Pull official Titan Edge
 RUN docker pull nezha123/titan-edge:latest || true
 
-# Копируем titan-edge бинарник
+# Copy Titan Edge
 RUN mkdir /titan
 WORKDIR /titan
-# Download some titan-edge release
 RUN wget -qO titan-edge.tar.gz https://github.com/ProNodeRunner/titan-edge-binaries/raw/main/titan-edge_0.1.20_linux_amd64.tar.gz || true
 RUN tar xzf titan-edge.tar.gz || true
 RUN cp titan-edge /usr/local/bin/titan-edge || true
 RUN chmod +x /usr/local/bin/titan-edge || true
+RUN ln -s /usr/local/bin/titan-edge /usr/bin/titan-edge
 
-# ensure we have PATH
-ENV PATH="/usr/local/bin:${PATH}"
-
-# Setup proxychains conf
+# proxychains config
 RUN echo -e 'strict_chain\nproxy_dns\n[ProxyList]\n' > /etc/proxychains4.conf
 
 COPY run.sh /run.sh
@@ -108,19 +103,16 @@ ENV PRELOAD_PROXYCHAINS=1
 ENTRYPOINT ["/run.sh"]
 EOF_DOCKER
 
+    # run.sh: Titan Edge daemon start & tail -f /dev/null
     cat <<'EOF_RUN' > run.sh
 #!/bin/bash
-# We run Titan Edge in background + tail -f /dev/null to keep container alive
-
 if [ "$PRELOAD_PROXYCHAINS" = "1" ] && [ -n "$ALL_PROXY" ]; then
   export LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libproxychains4.so
-  # Start Titan in background
-  proxychains4 /usr/local/bin/titan-edge daemon start &
+  # daemon start in background
+  proxychains4 titan-edge daemon start &
 else
-  /usr/local/bin/titan-edge daemon start &
+  titan-edge daemon start &
 fi
-
-# Keep container alive
 exec tail -f /dev/null
 EOF_RUN
 
@@ -138,11 +130,9 @@ generate_country_ip() {
     local first_octet=164
     local second_octet=138
     local third_octet=10
-    local fourth_octet
-    fourth_octet=$(shuf -i 2-254 -n1)
+    local fourth_octet=$(shuf -i 2-254 -n1)
     echo "${first_octet}.${second_octet}.${third_octet}.${fourth_octet}"
 }
-
 generate_random_port() {
     while true; do
         local p=$(shuf -i 30000-40000 -n1)
@@ -152,7 +142,6 @@ generate_random_port() {
         fi
     done
 }
-
 generate_spoofer_profile() {
     local cpus=(8 10 12 14 16 18 20 22 24 26 28 30 32)
     local c=${cpus[$RANDOM % ${#cpus[@]}]}
@@ -160,7 +149,6 @@ generate_spoofer_profile() {
     local ssd=$((512 + (RANDOM % 20)*512))
     echo "$c,$ram,$ssd"
 }
-
 generate_fake_mac() {
     printf "02:%02x:%02x:%02x:%02x:%02x" $((RANDOM%256)) $((RANDOM%256)) $((RANDOM%256)) $((RANDOM%256)) $((RANDOM%256))
 }
@@ -177,12 +165,9 @@ create_node() {
     local proxy_pass="$6"
 
     IFS=',' read -r cpu_val ram_val ssd_val <<< "$(generate_spoofer_profile)"
-    local host_port
-    host_port=$(generate_random_port)
-    local node_ip
-    node_ip=$(generate_country_ip)
-    local mac
-    mac=$(generate_fake_mac)
+    local host_port=$(generate_random_port)
+    local node_ip=$(generate_country_ip)
+    local mac=$(generate_fake_mac)
 
     local cpu_period=100000
     local cpu_quota=$((cpu_val*cpu_period))
@@ -210,25 +195,20 @@ create_node() {
         return 1
     fi
 
-    # Спуф IP
     sudo ip addr add "${node_ip}/24" dev "$NETWORK_INTERFACE" 2>/dev/null
     sudo iptables -t nat -A PREROUTING -p udp --dport "$host_port" -j DNAT --to-destination "$node_ip:1234"
     sudo netfilter-persistent save >/dev/null 2>&1
 
-    # Записываем в конфиг
     echo "${idx}|${identity_code}|${mac}|${host_port}|${node_ip}|$(date +%s)|${proxy_host}:${proxy_port}:${proxy_user}:${proxy_pass}|${cpu_val},${ram_val},${ssd_val}" \
       >> "$CONFIG_FILE"
 
     echo -e "${ORANGE}Спуф IP: $node_ip -> порт $host_port${NC}"
     echo -e "${ORANGE}[*] Bind ноды $idx (--hash=${identity_code})...${NC}"
 
-    # Sleep 10
     sleep 10
-
-    # Bind
-    # /usr/local/bin/titan-edge + proxychains4
     local BIND_URL="https://api-test1.container1.titannet.io/api/v2/device/binding"
-    if ! docker exec "titan_node_$idx" proxychains4 /usr/local/bin/titan-edge bind --hash="$identity_code" "$BIND_URL" 2>&1; then
+    # используем /usr/bin/titan-edge => symlink => /usr/local/bin/titan-edge
+    if ! docker exec "titan_node_$idx" proxychains4 /usr/bin/titan-edge bind --hash="$identity_code" "$BIND_URL" 2>&1; then
         echo -e "${RED}[✗] Bind ошибка. Возможно, ключ не создан или identity неверен${NC}"
     else
         echo -e "${GREEN}[✓] Bind OK для ноды $idx${NC}"
@@ -293,7 +273,7 @@ setup_nodes() {
 }
 
 ###############################################################################
-# (7) Проверка статуса
+# (7) Меню 3: Проверка статуса 
 ###############################################################################
 check_status() {
     clear
@@ -314,12 +294,12 @@ check_status() {
             continue
         fi
         local info
-        info=$(docker exec "$cname" proxychains4 /usr/local/bin/titan-edge info 2>/dev/null || true)
+        info=$(docker exec "$cname" proxychains4 /usr/bin/titan-edge info 2>/dev/null || true)
         local st
         if echo "$info" | grep -iq "Edge registered successfully"; then
             st="${GREEN}🟢 ALIVE${NC}"
         else
-            st="${RED}🔴 DEAD${NC}"
+            st="${RED}🔴 NOT_READY${NC}"
         fi
         IFS=',' read -r cpuv ramv ssdv <<< "$hwdata"
         local spoofer="${cpuv} CPU / ${ramv}GB / ${ssdv}GB"
