@@ -250,24 +250,26 @@ create_node() {
 export PATH=$PATH:/usr/local/titan
 export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/lib
 
-    echo -e "${ORANGE}Запуск titan_node_$idx (CPU=$cpu_val, RAM=${ram_val}G), порт=$host_port${NC}"
-    if ! docker run -d \
-        --name "titan_node_$idx" \
-        --restart unless-stopped \
-        --cpu-period="$cpu_period" \
-        --cpu-quota="$cpu_quota" \
-        --memory "${ram_val}g" \
-        --memory-swap "$((ram_val * 2))g" \
-        --mac-address "$mac" \
-        -p "${host_port}:1234/udp" \
-        -v "$volume:/root/.titanedge" \
-        -e ALL_PROXY="socks5://${proxy_user}:${proxy_pass}@${proxy_host}:${proxy_port}" \
-        -e PRELOAD_PROXYCHAINS=1 \
-        mytitan/proxy-titan-edge:latest
-    then
-        echo -e "${RED}[✗] Ошибка запуска контейнера titan_node_$idx${NC}"
-        return 1
-    fi
+echo -e "${ORANGE}Запуск titan_node_$idx (CPU=$cpu_val, RAM=${ram_val}G), порт=$host_port${NC}"
+if ! docker run -d \
+    --name "titan_node_$idx" \
+    --restart unless-stopped \
+    --cpu-period="$cpu_period" \
+    --cpu-quota="$cpu_quota" \
+    --memory "${ram_val}g" \
+    --memory-swap "$((ram_val * 2))g" \
+    --mac-address "$mac" \
+    -p "${host_port}:1234/tcp" \
+    -v "$volume:/root/.titanedge" \
+    -e ALL_PROXY="socks5://${proxy_user}:${proxy_pass}@${proxy_host}:${proxy_port}" \
+    -e PRELOAD_PROXYCHAINS=1 \
+    mytitan/proxy-titan-edge:latest \
+    daemon start --init --url=https://cassini-locator.titannet.io:5000/rpc/v0
+then
+    echo -e "${RED}[✗] Ошибка запуска контейнера titan_node_$idx${NC}"
+    return 1
+fi
+
 
     sudo ip addr add "${node_ip}/24" dev "$NETWORK_INTERFACE" 2>/dev/null
     sudo iptables -t nat -A PREROUTING -p udp --dport "$host_port" -j DNAT --to-destination "$node_ip:1234"
