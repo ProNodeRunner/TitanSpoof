@@ -2,12 +2,10 @@
 ################################################################################
 # TITAN BLOCKCHAIN NODE FINAL INSTALLATION SCRIPT
 # Изменения:
-#   - Убран несуществующий флаг --bind
-#   - Команда запуска Titan Edge: "titan-edge:latest daemon"
-#   - Остальной код без изменений
+#  - Убраны флаги --bind (не существуют)
+#  - Для регистрации ноды после daemon: titan-edge bind <ключ>
 ################################################################################
 
-############### 1. Глобальные переменные и цвета ###############
 CONFIG_FILE="/etc/titan_nodes.conf"
 LOGO_URL="https://raw.githubusercontent.com/ProNodeRunner/Logo/main/Logo"
 ORANGE='\033[0;33m'
@@ -19,10 +17,8 @@ NETWORK_INTERFACE=$(ip route | grep default | awk '{print $5}' | head -n1)
 declare -A USED_KEYS=()
 declare -A USED_PORTS=()
 
-############### 2. Отрисовка логотипа, меню, прогресс ###############
 show_logo() {
     local logo
-    # Удаляем цветовые коды, если есть
     logo=$(curl -sSf "$LOGO_URL" 2>/dev/null | sed -E 's/\x1B\[[0-9;]*[A-Za-z]//g')
     if [[ -z "$logo" ]]; then
         echo "=== TITAN NODE MANAGER v22 ==="
@@ -33,7 +29,7 @@ show_logo() {
 
 show_menu() {
     clear
-    tput setaf 3 # Оранжевый цвет
+    tput setaf 3
     show_logo
     echo -e "1) Установить компоненты\n2) Создать ноды\n3) Проверить статус\n4) Показать логи\n5) Перезапустить\n6) Очистка\n7) Выход"
     tput sgr0
@@ -46,7 +42,6 @@ progress_step() {
     echo -e "${ORANGE}[${step}/${total}] ${message}...${NC}"
 }
 
-############### 3. Установка зависимостей ###############
 install_dependencies() {
     progress_step 1 5 "Инициализация системы"
     export DEBIAN_FRONTEND=noninteractive
@@ -80,13 +75,12 @@ https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
     sleep 1
 }
 
-############### 4. Генерация IP, портов, профилей ###############
 generate_country_ip() {
-    # По условию пример 164.138.10.xxx
     local first_octet=164
     local second_octet=138
     local third_octet=10
-    local fourth_octet=$(shuf -i 2-254 -n1)
+    local fourth_octet
+    fourth_octet=$(shuf -i 2-254 -n1)
     echo "${first_octet}.${second_octet}.${third_octet}.${fourth_octet}"
 }
 
@@ -103,6 +97,10 @@ generate_random_port() {
     echo "$port"
 }
 
+generate_fake_mac() {
+    printf "02:%02x:%02x:%02x:%02x:%02x" $((RANDOM%256)) $((RANDOM%256)) $((RANDOM%256)) $((RANDOM%256)) $((RANDOM%256))
+}
+
 generate_realistic_profile() {
     local cpu_values=(8 10 12 14 16 18 20 22 24 26 28 30 32)
     local cpu=${cpu_values[$RANDOM % ${#cpu_values[@]}]}
@@ -111,11 +109,6 @@ generate_realistic_profile() {
     echo "$cpu,$ram,$ssd"
 }
 
-generate_fake_mac() {
-    printf "02:%02x:%02x:%02x:%02x:%02x" $((RANDOM%256)) $((RANDOM%256)) $((RANDOM%256)) $((RANDOM%256)) $((RANDOM%256))
-}
-
-############### 5. Проверка прокси ###############
 check_proxy() {
     local proxy_host=$1
     local proxy_port=$2
@@ -130,7 +123,6 @@ check_proxy() {
     return 0
 }
 
-############### 6. Создание и запуск ноды ###############
 create_node() {
     local node_num="$1"
     local identity_code="$2"
@@ -148,20 +140,13 @@ create_node() {
     local cpu_period=100000
     local cpu_quota=$((fake_cpu*cpu_period))
 
-    # 1. Удаляем старый контейнер / том
     docker rm -f "titan_node_$node_num" 2>/dev/null
-    docker volume create "$volume" >/dev/null || {
-        echo -e "${RED}[✗] Ошибка создания тома $volume${NC}"
-        return 1
-    }
+    docker volume create "$volume" >/dev/null
 
-    # 2. Запись ключа в том
-    echo "$identity_code" | docker run -i --rm -v "$volume:/data" busybox sh -c "cat > /data/identity.key" || {
-        echo -e "${RED}[✗] Ошибка записи ключа${NC}"
-        return 1
-    }
+    echo "$identity_code" | docker run -i --rm -v "$volume:/data" busybox sh -c "cat > /data/identity.key"
 
-    # 3. Запуск Titan Edge (убрали --bind, добавили daemon)
+    # Команда: сначала titan-edge daemon, затем bind <ключ>
+    # "sleep 5" даёт демону время стартовать
     if ! docker run -d \
         --name "titan_node_$node_num" \
         --restart unless-stopped \
@@ -174,25 +159,26 @@ create_node() {
         -v "$volume:/root/.titanedge" \
         -e http_proxy="http://${proxy_user}:${proxy_pass}@${proxy_host}:${proxy_port}" \
         -e https_proxy="http://${proxy_user}:${proxy_pass}@${proxy_host}:${proxy_port}" \
-        nezha123/titan-edge:latest daemon; then
+        nezha123/titan-edge:latest \
+        bash -c "titan-edge daemon & \
+                 sleep 5 && \
+                 titan-edge bind ${identity_code} && \
+                 tail -f /dev/null"; then
         echo -e "${RED}[✗] Ошибка запуска контейнера${NC}"
         return 1
     fi
 
-    # 4. Настройка сети
+    # Проброс IP
     sudo ip addr add "${node_ip}/24" dev "$NETWORK_INTERFACE" 2>/dev/null
     sudo iptables -t nat -A PREROUTING -i "$NETWORK_INTERFACE" -p udp --dport "$port" -j DNAT --to-destination "$node_ip:$port"
     sudo netfilter-persistent save >/dev/null 2>&1
 
-    # 5. Сохраняем конфигурацию
     echo "${node_num}|${identity_code}|${mac}|${port}|${node_ip}|$(date +%s)|${proxy_host}:${proxy_port}:${proxy_user}:${proxy_pass}" \
         >> "$CONFIG_FILE"
 
-    # 6. Инициализация
-    echo -e "${ORANGE}Инициализация ноды $node_num... (daemon mode)${NC}"
+    echo -e "${ORANGE}Инициализация ноды $node_num... (daemon + bind)${NC}"
 }
 
-############### 7. Авто-старт (--auto-start) ###############
 auto_start_nodes() {
     if [ ! -f "$CONFIG_FILE" ]; then
         echo -e "${RED}Файл $CONFIG_FILE не найден, автозапуск невозможен!${NC}"
@@ -204,7 +190,6 @@ auto_start_nodes() {
         local proxy_host proxy_port proxy_user proxy_pass
         IFS=':' read -r proxy_host proxy_port proxy_user proxy_pass <<< "$proxy_data"
 
-        # Если контейнер уже запущен — пропускаем
         if docker ps --format '{{.Names}}' | grep -q "titan_node_$node_num"; then
             continue
         fi
@@ -212,7 +197,6 @@ auto_start_nodes() {
     done < "$CONFIG_FILE"
 }
 
-############### 8. Меню и функции управления ###############
 setup_nodes() {
     local node_count
     while true; do
@@ -289,7 +273,7 @@ show_logs() {
     read -p "Введите номер ноды: " num
     echo -e "${ORANGE}Логи titan_node_${num}:${NC}"
     local logs
-    logs=$(docker logs --tail 50 "titan_node_${num}" 2>&1 | grep -iE 'error|fail|warn|binding')
+    logs=$(docker logs --tail 50 "titan_node_${num}" 2>&1)
     if command -v ccze &>/dev/null; then
         echo "$logs" | ccze -A
     else
@@ -346,7 +330,6 @@ cleanup() {
     sleep 3
 }
 
-############### 9. Systemd-юнит для автозапуска ###############
 if [ ! -f /etc/systemd/system/titan-node.service ]; then
     sudo bash -c "cat > /etc/systemd/system/titan-node.service <<EOF
 [Unit]
@@ -364,7 +347,6 @@ EOF"
     sudo systemctl enable titan-node.service >/dev/null 2>&1
 fi
 
-############### 10. Точка входа ###############
 case $1 in
     --auto-start)
         auto_start_nodes
