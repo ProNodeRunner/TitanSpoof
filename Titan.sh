@@ -78,11 +78,19 @@ https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
     sudo usermod -aG docker "$USER"
 
     echo -e "${ORANGE}[5/7] Извлечение titan-edge из nezha123/titan-edge...${NC}"
-    sudo docker pull nezha123/titan-edge:latest
-    sudo docker create --name titanextract nezha123/titan-edge:latest
-    # Предположим бинарник в /usr/local/bin/titan-edge:
-    # Если это не так, ls -R / чтобы найти, затем поправить путь
-    sudo docker cp titanextract:/usr/local/bin/titan-edge ./titan-edge || {
+echo -e "${ORANGE}[5/7] Извлечение бинарника titan-edge...${NC}"
+sudo docker pull nezha123/titan-edge:latest
+sudo docker rm -f titanextract 2>/dev/null
+sudo docker create --name titanextract nezha123/titan-edge:latest sleep 10
+sleep 5  # Даем контейнеру запуститься
+sudo docker cp titanextract:/usr/bin/titan-edge ./titan-edge || {
+    echo -e "${RED}Ошибка: titan-edge не найден в контейнере!${NC}"
+    sudo docker rm titanextract
+    exit 1
+}
+sudo docker rm -f titanextract
+chmod +x ./titan-edge
+  {
         echo -e "${RED}Не удалось скопировать /usr/local/bin/titan-edge из образа nezha123/titan-edge!${NC}"
         sudo docker rm titanextract
         return 1
@@ -91,6 +99,18 @@ https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
     sudo chmod +x titan-edge
 
     echo -e "${ORANGE}[6/7] Сборка Docker-образа Titan+ProxyChains...${NC}"
+
+# Проверка, скопирован ли бинарник перед сборкой
+if [ ! -f "./titan-edge" ]; then
+    echo -e "${RED}Ошибка: файл titan-edge отсутствует!${NC}"
+    exit 1
+fi
+
+sudo docker build --no-cache -t mytitan/proxy-titan-edge:latest -f Dockerfile.titan . || {
+    echo -e "${RED}[✗] Ошибка сборки Docker-образа!${NC}"
+    exit 1
+}
+
     cat <<'EOF_DOCKER' > Dockerfile.titan
 FROM ubuntu:22.04
 ENV DEBIAN_FRONTEND=noninteractive
@@ -99,7 +119,7 @@ RUN apt-get update -y && apt-get upgrade -y && \
     rm -rf /var/lib/apt/lists/*
 
 # Копируем извлечённый бинарник
-COPY titan-edge /usr/local/bin/titan-edge
+COPY titan-edge /usr/bin/titan-edge
 RUN chmod +x /usr/local/bin/titan-edge && ln -s /usr/local/bin/titan-edge /usr/bin/titan-edge
 
 # ProxyChains config
@@ -109,7 +129,7 @@ COPY run.sh /run.sh
 RUN chmod +x /run.sh
 
 ENV PRELOAD_PROXYCHAINS=1
-ENTRYPOINT ["/run.sh"]
+ENV LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libproxychains4.so
 EOF_DOCKER
 
     # run.sh
@@ -219,9 +239,17 @@ create_node() {
     # Подождём 10s
     sleep 10
 
-    local BIND_URL="https://api-test1.container1.titannet.io/api/v2/device/binding"
-    if ! docker exec "titan_node_$idx" proxychains4 /usr/bin/titan-edge bind --hash="$identity_code" "$BIND_URL" 2>&1; then
-        echo -e "${RED}[✗] Bind ошибка. Возможно, ключ не создан или identity неверен${NC}"
+    echo -e "${ORANGE}[*] Ожидание запуска контейнера titan_node_$idx...${NC}"
+sleep 15  # Даем время контейнеру запуститься
+
+local BIND_URL="https://api-test1.container1.titannet.io/api/v2/device/binding"
+if docker exec "titan_node_$idx" proxychains4 /usr/bin/titan-edge bind --hash="$identity_code" "$BIND_URL"; then
+    echo -e "${GREEN}[✓] Bind OK для ноды $idx${NC}"
+else
+    echo -e "${RED}[✗] Bind ошибка. Возможно, ключ не создан или identity неверен${NC}"
+    echo -e "${RED}Проверяем логи контейнера...${NC}"
+    docker logs --tail 10 "titan_node_$idx"
+fi
     else
         echo -e "${GREEN}[✓] Bind OK для ноды $idx${NC}"
     fi
