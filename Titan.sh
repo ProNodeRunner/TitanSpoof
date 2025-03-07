@@ -91,9 +91,6 @@ sudo docker cp titanextract:/usr/bin/titan-edge ./titan-edge || {
 sudo docker rm -f titanextract
 chmod +x ./titan-edge
 
-
-    echo -e "${ORANGE}[6/7] Сборка Docker-образа Titan+ProxyChains...${NC}"
-
 # Проверка, скопирован ли бинарник перед сборкой
 if [ ! -f "./titan-edge" ]; then
     echo -e "${RED}Ошибка: файл titan-edge отсутствует!${NC}"
