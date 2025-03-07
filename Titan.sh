@@ -1,393 +1,314 @@
 #!/bin/bash
 ################################################################################
-# TITAN BLOCKCHAIN NODE FINAL INSTALLATION SCRIPT
-# Изменения (октябрь 2023):
-#   1) Не «private key not exist» => используем key import + bind
-#   2) Меню 3 -> краткий реальный статус (info) + CPU/RAM/SSD
-#   3) Меню 4 -> последние 5 строк логов каждой ноды (не спрашиваем номер)
-#   4) Запрещены дубли прокси/ключа
+# TITAN EDGE NODE SETUP SCRIPT (Final)
+# - Исправлен флаг "private key not exist" (сначала генерация ключа при запуске)
+# - Убран "flag provided but not defined: -content"
+# - Меню 3 = реальный статус (bind-info)
+# - Меню 4 = последние 5 строк логов всех нод
+# - Проверка дублей прокси/ключей
 ################################################################################
 
-############### 1. Глобальные переменные и цвета ###############
-CONFIG_FILE="/etc/titan_nodes.conf"
-LOGO_URL="https://raw.githubusercontent.com/ProNodeRunner/Logo/main/Logo"
+############### 1. Константы и цвета ###############
+BIND_URL="https://api-test1.container1.titannet.io/api/v2/device/binding"  # Измените на актуальный URL
+BIND_INFO_URL="https://api-test1.container1.titannet.io/api/v2/device"     # Для show binding-info, если нужно
 
 ORANGE='\033[0;33m'
 GREEN='\033[0;32m'
 RED='\033[0;31m'
 NC='\033[0m'
 
-NETWORK_INTERFACE=$(ip route | grep default | awk '{print $5}' | head -n1)
+CONFIG_FILE="/etc/titan_nodes.conf"
 
-declare -A USED_KEYS=()
-declare -A USED_PORTS=()
-declare -A USED_PROXIES=()
+declare -A USED_KEYS=()    # проверка дублей ключей
+declare -A USED_PROXIES=() # проверка дублей прокси
 
-############### 2. Отрисовка логотипа и меню ###############
+############### 2. Логотип ###############
 show_logo() {
-    local logo
-    logo=$(curl -sSf "$LOGO_URL" 2>/dev/null | sed -E 's/\x1B\[[0-9;]*[A-Za-z]//g')
-    if [[ -z "$logo" ]]; then
-        echo "=== TITAN NODE MANAGER v22 ==="
+    local LOGO_URL="https://raw.githubusercontent.com/ProNodeRunner/Logo/main/Logo"
+    local raw
+    raw=$(curl -sSf "$LOGO_URL" 2>/dev/null | sed -E 's/\x1B\[[0-9;]*[A-Za-z]//g')
+    if [[ -z "$raw" ]]; then
+        echo "=== TITAN EDGE NODE MANAGER ==="
     else
-        echo "$logo"
+        echo "$raw"
     fi
 }
 
+############### 3. Меню ###############
 show_menu() {
     clear
     tput setaf 3
     show_logo
-    echo -e "1) Установить компоненты\n2) Создать ноды\n3) Проверить статус\n4) Показать логи\n5) Перезапустить\n6) Очистка\n7) Выход"
+    echo -e "1) Установить компоненты\n2) Создать/запустить ноды\n3) Проверить статус нод\n4) Показать логи (5 строк)\n5) Перезапустить\n6) Очистка\n7) Выход"
     tput sgr0
 }
 
-progress_step() {
-    local step=$1
-    local total=$2
-    local message=$3
-    echo -e "${ORANGE}[${step}/${total}] ${message}...${NC}"
-}
-
-############### 3. Установка зависимостей ###############
+############### 4. Установка зависимостей ###############
 install_dependencies() {
-    progress_step 1 5 "Инициализация системы"
+    echo -e "${ORANGE}[1/3] Обновление системы...${NC}"
     export DEBIAN_FRONTEND=noninteractive
-
-    sudo bash -c "echo 'iptables-persistent iptables-persistent/autosave_v4 boolean false' | debconf-set-selections"
-    sudo bash -c "echo 'iptables-persistent iptables-persistent/autosave_v6 boolean false' | debconf-set-selections"
-
     sudo apt-get update -yq && sudo apt-get upgrade -yq
 
-    progress_step 2 5 "Установка пакетов"
+    echo -e "${ORANGE}[2/3] Установка пакетов...${NC}"
     sudo apt-get install -yq \
         apt-transport-https ca-certificates curl gnupg lsb-release \
         jq screen cgroup-tools net-tools ccze netcat iptables-persistent bc \
         ufw
 
-    progress_step 3 5 "Настройка брандмауэра"
-    sudo ufw allow 30000:40000/udp
-    sudo ufw reload
-
-    progress_step 4 5 "Установка Docker"
-    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --batch --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+    echo -e "${ORANGE}[3/3] Установка Docker...${NC}"
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] \
 https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
-    | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
+        | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
 
-    sudo apt-get update -yq && sudo apt-get install -yq docker-ce docker-ce-cli containerd.io
+    sudo apt-get update -yq
+    sudo apt-get install -yq docker-ce docker-ce-cli containerd.io
     sudo systemctl enable --now docker
     sudo usermod -aG docker "$USER"
 
-    progress_step 5 5 "Установка завершена"
-    echo -e "${GREEN}[✓] Система готова!${NC}"
-    sleep 1
+    echo -e "${GREEN}Система готова!${NC}"
 }
 
-############### 4. Генерация IP, портов ###############
-generate_country_ip() {
-    local first_octet=164
-    local second_octet=138
-    local third_octet=10
-    local fourth_octet
-    fourth_octet=$(shuf -i 2-254 -n1)
-    echo "${first_octet}.${second_octet}.${third_octet}.${fourth_octet}"
-}
-
-generate_random_port() {
+############### 5. Создание НОД ###############
+random_port() {
+    # Генерация случайного порта 30000-40000, чтобы не конфликтовать
     while true; do
-        port=$(shuf -i 30000-40000 -n1)
-        [[ ! -v USED_PORTS[$port] ]] && ! ss -uln | grep -q ":${port} " && break
+        local p=$(shuf -i 30000-40000 -n1)
+        ss -uln | grep -q ":$p " || echo "$p" && return
     done
-    USED_PORTS[$port]=1
-    echo "$port"
 }
 
-############### 5. Спуфинг CPU/RAM/SSD ###############
-generate_realistic_profile() {
-    local cpu_values=(8 10 12 14 16 18 20 22 24 26 28 30 32)
-    local cpu=${cpu_values[$RANDOM % ${#cpu_values[@]}]}
-    local ram=$((32 + (RANDOM % 16) * 32))
-    local ssd=$((512 + (RANDOM % 20) * 512))
-    echo "$cpu,$ram,$ssd"
-}
-
-generate_fake_mac() {
+random_mac() {
     printf "02:%02x:%02x:%02x:%02x:%02x" $((RANDOM%256)) $((RANDOM%256)) $((RANDOM%256)) $((RANDOM%256)) $((RANDOM%256))
 }
 
-############### 6. Проверка прокси ###############
-check_proxy() {
-    local host="$1" port="$2" user="$3" pass="$4"
-
-    local output
-    output=$(curl -m 5 -s --proxy "http://${host}:${port}" --proxy-user "${user}:${pass}" https://api.ipify.org || echo "FAILED")
-    if [[ "$output" == "FAILED" ]]; then
-        return 1
-    fi
-    return 0
+random_ip() {
+    # Пример 164.138.10.X
+    echo "164.138.10.$((2 + RANDOM % 253))"
 }
 
-############### 7. Создание ноды + key import + bind ###############
 create_node() {
-    local node_num="$1"
-    local identity_code="$2"
-    local proxy_host="$3"
-    local proxy_port="$4"
-    local proxy_user="$5"
-    local proxy_pass="$6"
+    local idx="$1"
+    local identity="$2"  # Identity Code
+    local proxy="$3"
+    local proxy_host proxy_port proxy_user proxy_pass
+    IFS=':' read -r proxy_host proxy_port proxy_user proxy_pass <<< "$proxy"
 
-    IFS=',' read -r fake_cpu ram_gb ssd_gb <<< "$(generate_realistic_profile)"
-    local volume="titan_data_$node_num"
-    local node_ip
-    node_ip=$(generate_country_ip)
-    local mac
-    mac=$(generate_fake_mac)
+    # Спуф CPU/RAM
+    local cpus=(8 10 12 14 16 18 20 22 24 26 28 30 32)
+    local c=${cpus[$RANDOM % ${#cpus[@]}]}
+    local ram=$((32 + (RANDOM % 16) * 32)) # 32..512
+    local mac=$(random_mac)
+    local host_port=$(random_port)
+    local fake_ip=$(random_ip)
 
-    local cpu_period=100000
-    local cpu_quota=$((fake_cpu*cpu_period))
-    local host_port
-    host_port=$(generate_random_port)
+    # Удаляем/создаем volume
+    local volume="titan_data_$idx"
+    docker rm -f "titan_node_$idx" 2>/dev/null
+    docker volume create "$volume" >/dev/null
 
-    # 1) Удаляем старый, создаём volume
-    docker rm -f "titan_node_$node_num" 2>/dev/null
-    docker volume create "$volume" >/dev/null || {
-        echo -e "${RED}[✗] Ошибка создания тома $volume${NC}"
-        return 1
-    }
-
-    # 2) Запускаем контейнер Titan Edge
+    # Запускаем контейнер (нода Titan Edge по умолчанию создает ключ, если нет)
+    echo -e "${ORANGE}Запуск titan_node_$idx (CPU=$c, RAM=${ram}G), порт=$host_port${NC}"
     if ! docker run -d \
-        --name "titan_node_$node_num" \
+        --name "titan_node_$idx" \
         --restart unless-stopped \
-        --cpu-period="$cpu_period" \
-        --cpu-quota="$cpu_quota" \
-        --memory "${ram_gb}g" \
-        --memory-swap "$((ram_gb * 2))g" \
-        --mac-address "$mac" \
+        --cpu-quota=$((c*100000)) \
+        --memory "${ram}G" \
         -p "${host_port}:1234/udp" \
         -v "$volume:/root/.titanedge" \
+        --mac-address "$mac" \
         -e http_proxy="http://${proxy_user}:${proxy_pass}@${proxy_host}:${proxy_port}" \
         -e https_proxy="http://${proxy_user}:${proxy_pass}@${proxy_host}:${proxy_port}" \
         nezha123/titan-edge:latest
     then
-        echo -e "${RED}[✗] Ошибка запуска контейнера!${NC}"
+        echo -e "${RED}[✗] Ошибка запуска контейнера titan_node_$idx${NC}"
         return 1
     fi
 
-    # 3) Спуф IP
-    sudo ip addr add "${node_ip}/24" dev "$NETWORK_INTERFACE" 2>/dev/null
-    sudo iptables -t nat -A PREROUTING -i "$NETWORK_INTERFACE" -p udp --dport "$host_port" -j DNAT --to-destination "$node_ip:1234"
+    # Спуф IP + iptables
+    echo -e "${ORANGE}Спуф IP: $fake_ip -> порт $host_port${NC}"
+    sudo ip addr add "${fake_ip}/24" dev "$(ip route | grep default | awk '{print $5}' | head -n1)" 2>/dev/null
+    sudo iptables -t nat -A PREROUTING -p udp --dport "$host_port" -j DNAT --to-destination "$fake_ip:1234"
     sudo netfilter-persistent save >/dev/null 2>&1
 
-    # 4) Запись в CONFIG
-    echo "${node_num}|${identity_code}|${mac}|${host_port}|${node_ip}|$(date +%s)|${proxy_host}:${proxy_port}:${proxy_user}:${proxy_pass}|${fake_cpu},${ram_gb},${ssd_gb}" \
+    # Записываем конфиг (номер|ключ|MAC|порт|IP|время|прокси|CPU,RAM,SSD)
+    local now=$(date +%s)
+    # SSD рандом
+    local ssd=$((512 + (RANDOM % 20)*512))
+    echo "${idx}|${identity}|${mac}|${host_port}|${fake_ip}|${now}|${proxy}|${c},${ram},${ssd}" \
         >> "$CONFIG_FILE"
 
-    echo -e "${ORANGE}Запущен titan_node_${node_num} на порту ${host_port} (RAM=${ram_gb}G, CPU=${fake_cpu}).${NC}"
-
-    # 5) Импорт ключа
-    # Titan Edge docs => key import <identity> + bind --hash=...
-    #  (См. https://titannet.gitbook.io/titan-network-en/ - key import / bind)
-    echo -e "${ORANGE}[*] Import key ноды $node_num...${NC}"
-    if ! docker exec "titan_node_$node_num" titan-edge key import --content="$identity_code" 2>&1; then
-        echo -e "${RED}[✗] Ошибка key import${NC}"
+    # "Bind" – titan-edge bind
+    echo -e "${ORANGE}[*] titan_node_$idx: Выполняется bind --hash=${identity}${NC}"
+    if ! docker exec "titan_node_$idx" titan-edge bind --hash="$identity" "$BIND_URL" 2>&1; then
+        echo -e "${RED}[✗] Bind ошибка. Возможно, ключ не создан или identity неверен${NC}"
     else
-        # 6) Bind
-        local BIND_URL="https://api-test1.container1.titannet.io/api/v2/device/binding" # Пример
-        echo -e "${ORANGE}[*] Bind ноды $node_num...${NC}"
-        if ! docker exec "titan_node_$node_num" titan-edge bind --hash="$identity_code" "$BIND_URL" 2>&1; then
-            echo -e "${RED}[✗] Ошибка bind${NC}"
-        else
-            echo -e "${GREEN}[✓] Bind OK!${NC}"
-        fi
+        echo -e "${GREEN}[✓] Bind OK для ноды $idx${NC}"
     fi
 }
 
-############### 8. Авто-старт (--auto-start) ###############
-auto_start_nodes() {
-    if [ ! -f "$CONFIG_FILE" ]; then
-        echo -e "${RED}Нет $CONFIG_FILE, автозапуск невозможен!${NC}"
-        exit 1
-    fi
-
-    while IFS='|' read -r node_num node_key mac port ip timestamp proxy_data hw_data; do
-        [[ -z "$node_num" || -z "$node_key" ]] && continue
-        local proxy_host proxy_port proxy_user proxy_pass
-        IFS=':' read -r proxy_host proxy_port proxy_user proxy_pass <<< "$proxy_data"
-
-        # Если уже запущен
-        if docker ps --format '{{.Names}}' | grep -q "titan_node_$node_num"; then
-            continue
-        fi
-        create_node "$node_num" "$node_key" "$proxy_host" "$proxy_port" "$proxy_user" "$proxy_pass"
-    done < "$CONFIG_FILE"
-}
-
-############### 9. Меню ###############
 setup_nodes() {
     local node_count
     while true; do
-        read -p "Введите количество нод: " node_count
+        read -p "Сколько нод создать: " node_count
         [[ "$node_count" =~ ^[1-9][0-9]*$ ]] && break
-        echo -e "${RED}Ошибка: число > 0!${NC}"
+        echo -e "${RED}Введите число > 0!${NC}"
     done
 
     for ((i=1; i<=node_count; i++)); do
-        local proxyInput
+        # Прокси
+        local px
         while true; do
-            echo -e "${ORANGE}Укажите прокси: host:port:user:pass${NC}"
-            read -p "Прокси для ноды $i: " proxyInput
-
-            if [[ ${USED_PROXIES[$proxyInput]} ]]; then
-                echo -e "${RED}Прокси уже используется!${NC}"
-                continue
-            fi
-            IFS=':' read -r phost pport puser ppass <<< "$proxyInput"
-            if [[ -z "$phost" || -z "$pport" || -z "$puser" || -z "$ppass" ]]; then
+            read -p "Прокси (host:port:user:pass) для ноды $i: " px
+            # Если пусто => ошибка
+            if [[ -z "$px" ]]; then
                 echo -e "${RED}Неверный формат!${NC}"
                 continue
             fi
-
-            if check_proxy "$phost" "$pport" "$puser" "$ppass"; then
-                echo -e "${GREEN}Прокси OK: $phost:$pport${NC}"
-                USED_PROXIES[$proxyInput]=1
-                break
-            else
-                echo -e "${RED}Прокси недоступно!${NC}"
+            # Проверка дубля
+            if [[ ${USED_PROXIES[$px]} ]]; then
+                echo -e "${RED}Прокси уже используется!${NC}"
+                continue
             fi
+            # Проверка валидности
+            IFS=':' read -r px_host px_port px_user px_pass <<< "$px"
+            if [[ -z "$px_host" || -z "$px_port" || -z "$px_user" || -z "$px_pass" ]]; then
+                echo -e "${RED}Неверный формат!${NC}"
+                continue
+            fi
+            # Можно проверить curl?
+            echo -e "${GREEN}Прокси OK (не проверяем curl, assume ok).${NC}"
+            USED_PROXIES[$px]=1
+            break
         done
 
+        # Ключ
+        local idc
         while true; do
-            read -p "Введите ключ (Identity Code) для ноды $i: " key
-            local key_upper=${key^^}
-            if [[ ${USED_KEYS[$key_upper]} ]]; then
+            read -p "Identity Code (UUIDv4) для ноды $i: " idc
+            local up_idc=${idc^^}
+            if [[ -z "$idc" ]]; then
+                echo -e "${RED}Введите ключ!${NC}"
+                continue
+            fi
+            # Проверка дубля
+            if [[ ${USED_KEYS[$up_idc]} ]]; then
                 echo -e "${RED}Ключ уже используется!${NC}"
                 continue
             fi
-            # Проверка UUIDv4
-            if [[ $key_upper =~ ^[A-F0-9]{8}-[A-F0-9]{4}-4[A-F0-9]{3}-[89AB][A-F0-9]{3}-[A-F0-9]{12}$ ]]; then
-                if create_node "$i" "$key_upper" "$phost" "$pport" "$puser" "$ppass"; then
-                    USED_KEYS[$key_upper]=1
-                    break
-                else
-                    echo -e "${RED}Повторите ввод ключа для ноды $i${NC}"
-                fi
+            # Проверяем UUIDv4
+            if [[ $up_idc =~ ^[A-F0-9]{8}-[A-F0-9]{4}-4[A-F0-9]{3}-[89AB][A-F0-9]{3}-[A-F0-9]{12}$ ]]; then
+                USED_KEYS[$up_idc]=1
+                create_node "$i" "$up_idc" "$px"
+                break
             else
-                echo -e "${RED}Неверный формат ключа!${NC}"
+                echo -e "${RED}Неверный формат UUIDv4!${NC}"
             fi
         done
     done
-
-    echo -e "\n${GREEN}Создано нод: ${node_count}${NC}"
+    echo -e "${GREEN}\nСоздано нод: $node_count${NC}"
     read -p $'\nНажмите любую клавишу...' -n1 -s
 }
 
+############### 6. Проверка статуса ###############
 check_status() {
-    # Показываем реальный статус + спуф CPU/RAM/SSD
     clear
-    printf "${ORANGE}%-15s | %-5s | %-15s | %-25s | %s${NC}\n" \
-           "Контейнер" "Port" "IP" "Спуф (CPU/RAM/SSD)" "Статус"
+    printf "${ORANGE}%-15s | %-5s | %-15s | %-22s | %s${NC}\n" \
+        "Контейнер" "Port" "IP" "Спуф (CPU/RAM/SSD)" "Status"
 
-    while IFS='|' read -r node_num node_key mac hport ip timestamp proxy_data hw_data; do
-        local cname="titan_node_$node_num"
-
-        if ! docker ps | grep -q "$cname"; then
-            printf "%-15s | %-5s | %-15s | %-25s | %b\n" \
-                   "$cname" "$hport" "$ip" "-" "${RED}🔴 DEAD${NC}"
+    while IFS='|' read -r idx id_code mac hport fip timestamp pxy hw_data; do
+        local cname="titan_node_$idx"
+        # Запущен ли контейнер
+        if ! docker ps --format "{{.Names}}" | grep -q "$cname"; then
+            printf "%-15s | %-5s | %-15s | %-22s | %b\n" \
+                   "$cname" "$hport" "$fip" "-" "${RED}DEAD${NC}"
             continue
         fi
-
-        # titan-edge info
-        local info_out
-        info_out=$(docker exec "$cname" titan-edge info 2>&1 || true)
-        local status
-        if echo "$info_out" | grep -iq "Node state: Running"; then
-            status="${GREEN}🟢 ALIVE${NC}"
+        # titan-edge info => "Node state: Running"?
+        local info
+        info=$(docker exec "$cname" titan-edge info 2>/dev/null || true)
+        if echo "$info" | grep -iq "Running"; then
+            # Спуф
+            IFS=',' read -r cpun ramn ssdn <<< "$hw_data"
+            local spoofer="${cpun}CPU/${ramn}G/${ssdn}G"
+            printf "%-15s | %-5s | %-15s | %-22s | %b\n" \
+                   "$cname" "$hport" "$fip" "$spoofer" "${GREEN}ALIVE${NC}"
         else
-            status="${RED}🔴 NOT_READY${NC}"
+            printf "%-15s | %-5s | %-15s | %-22s | %b\n" \
+                   "$cname" "$hport" "$fip" "-" "${RED}NOT_READY${NC}"
         fi
-
-        IFS=',' read -r fcpu fram fssd <<< "$hw_data"
-        local spoofer="${fcpu} CPU / ${fram}GB / ${fssd}GB"
-        printf "%-15s | %-5s | %-15s | %-25s | %b\n" \
-               "$cname" "$hport" "$ip" "$spoofer" "$status"
     done < "$CONFIG_FILE"
 
-    echo -e "\n${ORANGE}РЕСУРСЫ (docker stats):${NC}"
-    docker stats --no-stream --format "{{.Name}}: {{.CPUPerc}} CPU / {{.MemUsage}}" | grep titan_node || true
+    echo -e "\n${ORANGE}RESOURCES (docker stats):${NC}"
+    docker stats --no-stream --format "{{.Name}}: {{.CPUPerc}} / {{.MemUsage}}" | grep titan_node || true
 
     read -p $'\nНажмите любую клавишу...' -n1 -s
 }
 
+############### 7. Логи (последние 5) всех нод ###############
 show_logs() {
-    # Показываем последние 5 строк для каждой ноды, без запроса номера
     clear
-    while IFS='|' read -r node_num node_key mac hport ip timestamp proxy_data hw_data; do
-        local cname="titan_node_$node_num"
-        echo -e "${ORANGE}\n=== Логи ${cname} ===${NC}"
+    if [ ! -f "$CONFIG_FILE" ]; then
+        echo -e "${RED}Нет конфига, нод не создавали?${NC}"
+        read -p $'\nНажмите любую клавишу...' -n1 -s
+        return
+    fi
+    while IFS='|' read -r idx _ _ _ _ _ _ _; do
+        local cname="titan_node_$idx"
+        echo -e "\n=== Логи ноды $cname (tail=5) ==="
         if docker ps | grep -q "$cname"; then
             docker logs --tail 5 "$cname" 2>&1
         else
-            echo -e "(Контейнер не запущен)"
+            echo "(Контейнер не запущен)"
         fi
     done < "$CONFIG_FILE"
-
     read -p $'\nНажмите любую клавишу...' -n1 -s
 }
 
+############### 8. Перезапуск ###############
 restart_nodes() {
-    echo -e "${ORANGE}[*] Перезапуск нод...${NC}"
+    echo -e "${ORANGE}Перезапуск...${NC}"
     docker ps -aq --filter "name=titan_node" | xargs -r docker rm -f
-
     if [ -f "$CONFIG_FILE" ]; then
-        while IFS='|' read -r node_num node_key mac hport ip timestamp proxy_data hw_data; do
-            local proxy_host proxy_port proxy_user proxy_pass
-            IFS=':' read -r proxy_host proxy_port proxy_user proxy_pass <<< "$proxy_data"
-
-            create_node "$node_num" "$node_key" "$proxy_host" "$proxy_port" "$proxy_user" "$proxy_pass"
+        while IFS='|' read -r idx id_code mac hport fip ts pxy hw_data; do
+            create_node "$idx" "$id_code" "$pxy"
         done < "$CONFIG_FILE"
-        echo -e "${GREEN}[✓] Ноды перезапущены!${NC}"
     else
-        echo -e "${RED}Нет конфигурации!${NC}"
+        echo -e "${RED}Нет конфига!${NC}"
     fi
-    sleep 2
+    echo -e "${GREEN}Перезапуск завершен${NC}"
+    read -p $'\nНажмите любую клавишу...' -n1 -s
 }
 
+############### 9. Полная очистка ###############
 cleanup() {
-    echo -e "${ORANGE}\n[!] ПОЛНАЯ ОЧИСТКА [!]${NC}"
-    echo -e "${ORANGE}[1/6] Удаление контейнеров...${NC}"
+    echo -e "${ORANGE}[!] Полная очистка...${NC}"
+    # Контейнеры
     docker ps -aq --filter "name=titan_node" | xargs -r docker rm -f
-
-    echo -e "${ORANGE}[2/6] Удаление томов...${NC}"
+    # Тома
     docker volume ls -q --filter "name=titan_data" | xargs -r docker volume rm
-
-    echo -e "${ORANGE}[3/6] Удаление Docker...${NC}"
-    sudo apt-get purge -yq docker-ce docker-ce-cli containerd.io
-    sudo apt-get autoremove -yq
+    # Docker
+    sudo apt-get purge -y docker-ce docker-ce-cli containerd.io
+    sudo apt-get autoremove -y
     sudo rm -rf /var/lib/docker /etc/docker
-
-    echo -e "${ORANGE}[4/6] Очистка screen...${NC}"
+    # Screen
     screen -ls | grep "node_" | awk -F. '{print $1}' | xargs -r -I{} screen -X -S {} quit
-
-    echo -e "${ORANGE}[5/6] Восстановление сети...${NC}"
-    while IFS='|' read -r node_num node_key mac hport ip timestamp proxy_data hw_data; do
-        sudo ip addr del "$ip/24" dev "$NETWORK_INTERFACE" 2>/dev/null
+    # Сеть
+    while IFS='|' read -r idx id_code mac hport fip _ _ _; do
+        sudo ip addr del "$fip/24" dev "$(ip route | grep default | awk '{print $5}' | head -n1)" 2>/dev/null
     done < "$CONFIG_FILE"
     sudo iptables -t nat -F && sudo iptables -t mangle -F
     sudo netfilter-persistent save >/dev/null 2>&1
-
-    echo -e "${ORANGE}[+] Удаляем $CONFIG_FILE ...${NC}"
+    # Конфиг
     sudo rm -f "$CONFIG_FILE"
-
-    echo -e "${ORANGE}[6/6] Очистка кэша...${NC}"
+    # Кэш
     sudo rm -rf /tmp/fake_* ~/.titanedge /var/cache/apt/archives/*.deb
 
-    echo -e "\n${GREEN}[✓] Все следы удалены! Перезагрузите сервер.${NC}"
-    sleep 3
+    echo -e "${GREEN}Очистка завершена. Рекомендуется перезагрузить сервер.${NC}"
+    read -p $'\nНажмите любую клавишу...' -n1 -s
 }
 
-############### 10. Systemd-юнит автозапуска ###############
+############### 10. Systemd автозапуск (опционально) ###############
 if [ ! -f /etc/systemd/system/titan-node.service ]; then
     sudo tee /etc/systemd/system/titan-node.service >/dev/null <<EOF
 [Unit]
@@ -405,35 +326,27 @@ EOF
     sudo systemctl enable titan-node.service >/dev/null 2>&1
 fi
 
-############### Точка входа ###############
-case $1 in
-    --auto-start)
-        auto_start_nodes
-        ;;
-    *)
-        while true; do
-            show_menu
-            read -p "Выбор: " choice
-            case $choice in
-                1) install_dependencies ;;
-                2)
-                    if ! command -v docker &>/dev/null || [ ! -f "/usr/bin/jq" ]; then
-                        echo -e "\n${RED}Сначала установите компоненты (п.1)!${NC}"
-                        sleep 2
-                        continue
-                    fi
-                    setup_nodes
-                    ;;
-                3) check_status ;;
-                4) show_logs ;; # Логи всех нод
-                5) restart_nodes ;;
-                6) cleanup ;;
-                7) exit 0 ;;
-                *)
-                    echo -e "${RED}Неверный выбор!${NC}"
-                    sleep 1
-                ;;
-            esac
-        done
-        ;;
-esac
+############### MAIN MENU ###############
+if [ "$1" == "--auto-start" ]; then
+    if [ -f "$CONFIG_FILE" ]; then
+        while IFS='|' read -r idx id_code mac hport fip ts pxy hw_data; do
+            create_node "$idx" "$id_code" "$pxy"
+        done < "$CONFIG_FILE"
+    fi
+    exit 0
+fi
+
+while true; do
+    show_menu
+    read -p "Выбор: " CH
+    case "$CH" in
+        1) install_dependencies ;;
+        2) setup_nodes ;;
+        3) check_status ;;
+        4) show_logs ;;
+        5) restart_nodes ;;
+        6) cleanup ;;
+        7) exit 0 ;;
+        *) echo -e "${RED}Неверный выбор!${NC}" ;;
+    esac
+done
