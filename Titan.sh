@@ -2,11 +2,10 @@
 ################################################################################
 # TITAN BLOCKCHAIN NODE FINAL INSTALLATION SCRIPT (ProxyChains + Socks5 + Titan)
 #
-# - Меню 2: пользователь вводит socks5 (host:port:user:pass).
-# - Мы используем Docker-образ, где Titan Edge + ProxyChains4 (UDP support).
-# - Titan Edge запускается через `proxychains4 titan-edge`, чтобы перенаправить QUIC/UDP.
-# - Увеличена задержка перед bind => sleep 10, чтобы избежать “private key not exist”
-# - Сохраняем все пункты: очистка (1/6), Docker no confirm, spoofer CPU/RAM/SSD, etc.
+# - Убираем подтверждения (gpg --yes --batch, rm -f ...)
+# - ProxyChains4-based approach to intercept Titan Edge UDP via socks5
+# - Spuф IP/CPU/RAM/SSD, 6-step cleanup, Docker no confirm
+# - Sleep 10 before bind to avoid “private key not exist”
 ################################################################################
 
 ############### 1. Глобальные переменные ###############
@@ -24,7 +23,7 @@ declare -A USED_KEYS=()
 declare -A USED_PORTS=()
 declare -A USED_PROXIES=()
 
-############### 2. Логотип + меню ###############
+############### 2. Логотип, меню ###############
 show_logo() {
     local raw
     raw=$(curl -sSf "$LOGO_URL" 2>/dev/null | sed -E 's/\x1B\[[0-9;]*[A-Za-z]//g')
@@ -43,7 +42,7 @@ show_menu() {
     tput sgr0
 }
 
-############### 3. Установка (включая сборку образа Titan + ProxyChains) ###############
+############### 3. Установка (Docker + ProxyChains Titan) ###############
 install_dependencies() {
     echo -e "${ORANGE}[1/6] Инициализация системы...${NC}"
     export DEBIAN_FRONTEND=noninteractive
@@ -54,16 +53,20 @@ install_dependencies() {
 
     echo -e "${ORANGE}[2/6] Установка пакетов...${NC}"
     sudo apt-get install -yq \
-        apt-transport-https ca-certificates curl gnupg lsb-release \
-        jq screen cgroup-tools net-tools ccze netcat iptables-persistent bc \
-        ufw git build-essential
+      apt-transport-https ca-certificates curl gnupg lsb-release \
+      jq screen cgroup-tools net-tools ccze netcat iptables-persistent bc \
+      ufw git build-essential
 
     echo -e "${ORANGE}[3/6] Настройка брандмауэра...${NC}"
     sudo ufw allow 30000:40000/udp
-    sudo ufw reload
+    sudo ufw reload || true
 
     echo -e "${ORANGE}[4/6] Установка Docker...${NC}"
-    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+    # Удаляем, чтобы не было вопроса overwrite
+    sudo rm -f /usr/share/keyrings/docker-archive-keyring.gpg
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | \
+      sudo gpg --batch --yes --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] \
 https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
       | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
@@ -73,56 +76,39 @@ https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
     sudo systemctl enable --now docker
     sudo usermod -aG docker "$USER"
 
-    echo -e "${ORANGE}[5/6] Сборка Docker-образа Titan (с ProxyChains)...${NC}"
-    # Создаем временный Dockerfile
+    echo -e "${ORANGE}[5/6] Сборка Docker-образа Titan+ProxyChains...${NC}"
+    # Создаем Dockerfile
     cat <<'EOF_DOCKER' > Dockerfile.titan
 FROM ubuntu:22.04
 
-# Install dependencies (curl, etc.)
+# Install dependencies
 RUN apt-get update -y && DEBIAN_FRONTEND=noninteractive apt-get install -y \
-    proxychains4 libproxychains4 git wget ca-certificates \
+    proxychains4 libproxychains4 git wget ca-certificates docker.io \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Titan Edge from nezha123/titan-edge:latest
-# We'll just copy the binary from that container:
-RUN apt-get update -y && DEBIAN_FRONTEND=noninteractive apt-get install -y docker.io && rm -rf /var/lib/apt/lists/*
-RUN docker pull nezha123/titan-edge:latest
+# Pull official titan-edge
+RUN docker pull nezha123/titan-edge:latest || true
 
-# We extract titan-edge binary from the official container:
-# (Simplified approach – or we can do 'docker export', etc.)
-# But in practice, we'd do something like:
-#   RUN docker create --name extract nezha123/titan-edge:latest
-#   RUN docker cp extract:/usr/local/bin/titan-edge /usr/local/bin/
-# ...
-# For simplicity, let's just do a direct download if there's a link.
-# But you only gave us a container name. We'll do a trick:
+# (In a real scenario, we'd copy the titan-edge binary from that container or use a direct link)
+RUN mkdir /titan && cd /titan && \
+    wget -qO titan-edge.tar.gz https://github.com/ProNodeRunner/titan-edge-binaries/raw/main/titan-edge_0.1.20_linux_amd64.tar.gz || true && \
+    tar xzf titan-edge.tar.gz || true && \
+    cp titan-edge /usr/local/bin/titan-edge || true && chmod +x /usr/local/bin/titan-edge || true
 
-RUN mkdir /titan
-WORKDIR /titan
-# We can get Titan Edge from a known URL or from the container:
-RUN wget -qO titan-edge.tar.gz https://github.com/ProNodeRunner/titan-edge-binaries/raw/main/titan-edge_0.1.20_linux_amd64.tar.gz || true
-RUN tar xzf titan-edge.tar.gz || true
-RUN cp titan-edge /usr/local/bin/titan-edge || true
-RUN chmod +x /usr/local/bin/titan-edge || true
+# Setup proxychains config
+RUN echo -e 'strict_chain\nproxy_dns\n[ProxyList]\n# socks5 127.0.0.1 9050\n' > /etc/proxychains4.conf
 
-# Setup ProxyChains
-RUN echo -e 'strict_chain\nproxy_dns\n[ProxyList]\n# socks5   127.0.0.1 9050\n' > /etc/proxychains4.conf
-
-# Entry point: we wrap Titan Edge with proxychains4 + LD_PRELOAD if needed
-# We'll set an ENV so we can do `ENV PRELOAD_PROXYCHAINS=1` or something
-ENV PRELOAD_PROXYCHAINS=1
+# Copy run.sh
 COPY run.sh /run.sh
 RUN chmod +x /run.sh
 
+ENV PRELOAD_PROXYCHAINS=1
 ENTRYPOINT ["/run.sh"]
 EOF_DOCKER
 
-# Create run.sh for our image
-cat <<'EOF_RUN' > run.sh
+    cat <<'EOF_RUN' > run.sh
 #!/bin/bash
 if [ "$PRELOAD_PROXYCHAINS" = "1" ] && [ -n "$ALL_PROXY" ]; then
-  # we will wrap with proxychains
-  # Also note we might need to do:  LD_PRELOAD=libproxychains4.so ...
   export LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libproxychains4.so
   exec proxychains4 titan-edge "$@"
 else
@@ -130,7 +116,7 @@ else
 fi
 EOF_RUN
 
-sudo docker build -t mytitan/proxy-titan-edge:latest -f Dockerfile.titan .
+    sudo docker build -t mytitan/proxy-titan-edge:latest -f Dockerfile.titan .
 
     echo -e "${ORANGE}[6/6] Завершение установки...${NC}"
     echo -e "${GREEN}[✓] Titan + ProxyChains готово!${NC}"
@@ -142,7 +128,8 @@ generate_country_ip() {
     local first_octet=164
     local second_octet=138
     local third_octet=10
-    local fourth_octet=$(shuf -i 2-254 -n1)
+    local fourth_octet
+    fourth_octet=$(shuf -i 2-254 -n1)
     echo "${first_octet}.${second_octet}.${third_octet}.${fourth_octet}"
 }
 
@@ -168,7 +155,7 @@ generate_fake_mac() {
     printf "02:%02x:%02x:%02x:%02x:%02x" $((RANDOM%256)) $((RANDOM%256)) $((RANDOM%256)) $((RANDOM%256)) $((RANDOM%256))
 }
 
-############### 5. Создание и запуск ноды (через proxychains container) ###############
+############### 5. Создание и запуск ноды (через Titan+ProxyChains) ###############
 create_node() {
     local idx="$1"
     local identity_code="$2"
@@ -178,12 +165,9 @@ create_node() {
     local proxy_pass="$6"
 
     IFS=',' read -r cpu_val ram_val ssd_val <<< "$(generate_spoofer_profile)"
-    local host_port
-    host_port=$(generate_random_port)
-    local node_ip
-    node_ip=$(generate_country_ip)
-    local mac
-    mac=$(generate_fake_mac)
+    local host_port=$(generate_random_port)
+    local node_ip=$(generate_country_ip)
+    local mac=$(generate_fake_mac)
 
     local cpu_period=100000
     local cpu_quota=$((cpu_val*cpu_period))
@@ -223,7 +207,7 @@ create_node() {
     echo -e "${ORANGE}Спуф IP: $node_ip -> порт $host_port${NC}"
     echo -e "${ORANGE}[*] Bind ноды $idx (--hash=${identity_code})...${NC}"
 
-    # Увеличим задержку до 10с, чтобы Titan Edge точно создал ключ
+    # Увеличим задержку до 10с
     sleep 10
     local BIND_URL="https://api-test1.container1.titannet.io/api/v2/device/binding"
     if ! docker exec "titan_node_$idx" proxychains4 titan-edge bind --hash="$identity_code" "$BIND_URL" 2>&1; then
@@ -290,7 +274,7 @@ setup_nodes() {
     read -p $'\nНажмите любую клавишу...' -n1 -s
 }
 
-############### 7. Проверка статуса ###############
+############### 6. Проверка статуса ###############
 check_status() {
     clear
     printf "${ORANGE}%-15s | %-5s | %-15s | %-25s | %s${NC}\n" \
@@ -311,6 +295,7 @@ check_status() {
             continue
         fi
 
+        # info
         local info
         info=$(docker exec "$cname" proxychains4 titan-edge info 2>/dev/null || true)
         local st
@@ -333,7 +318,7 @@ check_status() {
     read -p $'\nНажмите любую клавишу...' -n1 -s
 }
 
-############### 8. Логи (последние 5 строк) всех нод ###############
+############### 7. Логи (последние 5 строк) всех нод ###############
 show_logs() {
     clear
     if [ ! -f "$CONFIG_FILE" ]; then
@@ -354,7 +339,7 @@ show_logs() {
     read -p $'\nНажмите любую клавишу...' -n1 -s
 }
 
-############### 9. Перезапуск, Очистка, автозапуск ###############
+############### 8. Перезапуск, Очистка, автозапуск ###############
 restart_nodes() {
     echo -e "${ORANGE}[*] Перезапуск нод...${NC}"
     docker ps -aq --filter "name=titan_node" | xargs -r docker rm -f
@@ -446,12 +431,8 @@ case "$1" in
             show_menu
             read -p "Выбор: " CH
             case "$CH" in
-                1)
-                    # Install + build local Titan+ProxyChains image
-                    install_dependencies
-                    ;;
+                1) install_dependencies ;;
                 2)
-                    # Create nodes
                     if ! command -v docker &>/dev/null || [ ! -f "/usr/bin/jq" ]; then
                         echo -e "\n${RED}Сначала установите компоненты (1)!${NC}"
                         sleep 2
