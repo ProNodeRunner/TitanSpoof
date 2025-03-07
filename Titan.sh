@@ -76,8 +76,13 @@ https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
     sudo systemctl enable --now docker
     sudo usermod -aG docker "$USER"
 
-    echo -e "${ORANGE}[5/7] Извлечение libgoworkerd.so...${NC}"
-    docker create --name temp_titan nezha123/titan-edge:latest
+   echo -e "${ORANGE}[5/7] Извлечение libgoworkerd.so...${NC}"
+
+# Проверяем, есть ли уже библиотека, чтобы не загружать лишний раз
+if [ ! -f "./libgoworkerd.so" ]; then
+    echo -e "${ORANGE}Извлекаем libgoworkerd.so из кастомного образа...${NC}"
+    
+    docker create --name temp_titan mytitan/proxy-titan-edge-custom
     docker cp temp_titan:/usr/lib/libgoworkerd.so ./libgoworkerd.so
     docker rm -f temp_titan
 
@@ -85,9 +90,11 @@ https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
         echo -e "${RED}Ошибка: libgoworkerd.so не найден!${NC}"
         exit 1
     fi
+fi
 
-    echo -e "${ORANGE}[6/7] Сборка Docker-образа Titan+ProxyChains...${NC}"
+echo -e "${ORANGE}[6/7] Сборка Docker-образа Titan+ProxyChains...${NC}"
 
+# Создаём Dockerfile для кастомного образа
 cat > Dockerfile.titan <<EOF
 FROM docker.io/library/ubuntu:22.04
 
@@ -108,19 +115,19 @@ RUN apt update && \
     echo "[ProxyList]" >> /etc/proxychains4.conf
 EOF
 
-    docker build -t mytitan/proxy-titan-edge:latest -f Dockerfile.titan . || {
-        echo -e "${RED}[✗] Ошибка сборки Docker-образа!${NC}"
-        exit 1
-    }
+# Собираем кастомный образ
+docker build -t mytitan/proxy-titan-edge-custom -f Dockerfile.titan . || {
+    echo -e "${RED}[✗] Ошибка сборки Docker-образа!${NC}"
+    exit 1
+}
 
-    docker rm -f temp_titan
-    chmod +x ./titan-edge
+echo -e "${ORANGE}[6.5/7] Проверка наличия titan-edge...${NC}"
 
+# Проверяем, есть ли бинарник titan-edge, если его нет — извлекаем
 if [ ! -f "./titan-edge" ]; then
-    echo -e "${RED}Ошибка: файл titan-edge отсутствует! Попробуем извлечь...${NC}"
+    echo -e "${ORANGE}Извлекаем titan-edge из кастомного образа...${NC}"
     
-    # Создаём контейнер и копируем бинарник
-    docker create --name titanextract nezha123/titan-edge:latest
+    docker create --name titanextract mytitan/proxy-titan-edge-custom
     docker cp titanextract:/usr/bin/titan-edge ./titan-edge
     docker rm -f titanextract
 
@@ -131,10 +138,9 @@ if [ ! -f "./titan-edge" ]; then
     chmod +x ./titan-edge
 fi
 
-
-    echo -e "${ORANGE}[7/7] Завершение установки...${NC}"
-    echo -e "${GREEN}[✓] Titan + ProxyChains готово!${NC}"
-    sleep 2
+echo -e "${ORANGE}[7/7] Завершение установки...${NC}"
+echo -e "${GREEN}[✓] Titan + ProxyChains готово!${NC}"
+sleep 2
 }
 
 
