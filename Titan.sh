@@ -97,20 +97,25 @@ https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
 echo -e "${ORANGE}[5/7] Сборка кастомного Docker-образа с proxychains4...${NC}"
 
 # Создание Dockerfile
-cat <<EOF > Dockerfile
-FROM nezha123/titan-edge:latest
+cat > Dockerfile.titan <<EOF
+FROM docker.io/library/ubuntu:22.04
+
+COPY libgoworkerd.so /usr/lib/libgoworkerd.so
+RUN ldconfig
 
 RUN apt update && \
     DEBIAN_FRONTEND=noninteractive apt install -y proxychains4 curl && \
-    rm -f /etc/proxychains4.conf && \
     echo "proxychains4 proxychains4.conf boolean false" | debconf-set-selections && \
+    rm -f /etc/proxychains4.conf && \
     echo "strict_chain" > /etc/proxychains4.conf && \
     echo "proxy_dns" >> /etc/proxychains4.conf && \
     echo "tcp_read_time_out 15000" >> /etc/proxychains4.conf && \
     echo "tcp_connect_time_out 8000" >> /etc/proxychains4.conf && \
-    echo "[ProxyList]" >> /etc/proxychains4.conf && \
-    apt clean && rm -rf /var/lib/apt/lists/*
+    echo "[ProxyList]" >> /etc/proxychains4.conf
+
+ENTRYPOINT ["proxychains4", "/usr/local/bin/titan-edge"]
 EOF
+
 
 
 
