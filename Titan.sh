@@ -104,17 +104,28 @@ COPY titan-edge /usr/local/bin/titan-edge
 RUN ldconfig
 RUN chmod +x /usr/local/bin/titan-edge && ln -s /usr/local/bin/titan-edge /usr/bin/titan-edge
 
+# Добавляем аргументы для прокси
+ARG proxy_host
+ARG proxy_port
+ARG proxy_user
+ARG proxy_pass
+
+# Устанавливаем переменные окружения для контейнера
+ENV PROXY_HOST=\$proxy_host
+ENV PROXY_PORT=\$proxy_port
+ENV PROXY_USER=\$proxy_user
+ENV PROXY_PASS=\$proxy_pass
+
 RUN apt update && \
     DEBIAN_FRONTEND=noninteractive apt install -y proxychains4 curl && \
     echo "proxychains4 proxychains4.conf boolean false" | debconf-set-selections && \
-    rm -f /etc/proxychains4.conf && \  # <--- ВАЖНО! Удаляем старый конфиг
+    rm -f /etc/proxychains4.conf && \
     echo "strict_chain" > /etc/proxychains4.conf && \
     echo "proxy_dns" >> /etc/proxychains4.conf && \
     echo "tcp_read_time_out 15000" >> /etc/proxychains4.conf && \
     echo "tcp_connect_time_out 8000" >> /etc/proxychains4.conf && \
     echo "[ProxyList]" >> /etc/proxychains4.conf && \
-    echo "DEBUG: socks5 $proxy_host $proxy_port $proxy_user $proxy_pass" && \
-    echo "socks5 $proxy_host $proxy_port $proxy_user $proxy_pass" >> /etc/proxychains4.conf || exit 1
+    echo "socks5 \$PROXY_HOST \$PROXY_PORT \$PROXY_USER \$PROXY_PASS" >> /etc/proxychains4.conf
 EOF
 
 # Собираем кастомный образ
