@@ -94,15 +94,24 @@ https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
     sudo systemctl enable --now docker
     sudo usermod -aG docker "$USER"
 
-echo -e "${ORANGE}[5/7] Извлечение бинарника titan-edge...${NC}"
-sudo docker pull nezha123/titan-edge:latest
-sudo docker rm -f titanextract 2>/dev/null
-sudo docker create --name titanextract nezha123/titan-edge:latest
-sudo docker start titanextract  # 🟢 Запускаем контейнер
-sleep 5  # Даем контейнеру запуститься
-sudo docker cp titanextract:/usr/bin/titan-edge ./titan-edge || {
-    echo -e "${RED}Ошибка: titan-edge не найден в контейнере!${NC}"
-    sudo docker rm -f titanextract
+echo -e "${ORANGE}[5/7] Сборка кастомного Docker-образа с proxychains4...${NC}"
+
+# Создание Dockerfile
+cat > Dockerfile << EOF
+FROM nezha123/titan-edge:latest
+
+RUN apt update && \
+    DEBIAN_FRONTEND=noninteractive apt install -y proxychains4 curl && \
+    rm -f /etc/proxychains4.conf && \
+    echo "strict_chain" > /etc/proxychains4.conf && \
+    echo "proxy_dns" >> /etc/proxychains4.conf && \
+    echo "tcp_read_time_out 15000" >> /etc/proxychains4.conf && \
+    echo "tcp_connect_time_out 8000" >> /etc/proxychains4.conf && \
+    echo "[ProxyList]" >> /etc/proxychains4.conf && \
+    apt clean && rm -rf /var/lib/apt/lists/*
+
+docker build -t mytitan/proxy-titan-edge-custom .
+
     exit 1
 }
 sudo docker rm -f titanextract
