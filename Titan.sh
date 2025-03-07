@@ -111,7 +111,9 @@ FROM ubuntu:22.04
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update -y && apt-get upgrade -y && \
     apt-get install -y proxychains4 libproxychains4 libstdc++6 && \
-    ln -s /usr/lib/x86_64-linux-gnu/libproxychains4.so.4 /usr/lib/x86_64-linux-gnu/libproxychains4.so && \
+    ln -sf /usr/lib/x86_64-linux-gnu/libproxychains4.so.4 /usr/lib/libproxychains4.so && \
+    ln -sf /usr/lib/x86_64-linux-gnu/libproxychains4.so.4 /usr/lib/x86_64-linux-gnu/libproxychains4.so && \
+    ln -sf /usr/lib/x86_64-linux-gnu/libproxychains4.so.4 /lib/x86_64-linux-gnu/libproxychains4.so && \
     rm -rf /var/lib/apt/lists/*
 
 
@@ -126,7 +128,6 @@ COPY run.sh /run.sh
 RUN chmod +x /run.sh
 
 ENV PRELOAD_PROXYCHAINS=1
-ENV LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libproxychains4.so
 EOF_DOCKER
 
 # 🟢 Теперь собираем образ!
