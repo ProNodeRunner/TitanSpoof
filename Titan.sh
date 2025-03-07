@@ -109,8 +109,10 @@ fi
 cat <<'EOF_DOCKER' > Dockerfile.titan
 FROM ubuntu:22.04
 ENV DEBIAN_FRONTEND=noninteractive
+
 RUN apt-get update -y && apt-get upgrade -y && \
-    apt-get install -y proxychains4 libproxychains4 libstdc++6 && \
+    apt-get install -y proxychains4 libproxychains4 libstdc++6 \
+    libgoworkerd-dev libgoworkerd1 && \
     ln -sf /usr/lib/x86_64-linux-gnu/libproxychains4.so.4 /usr/lib/libproxychains4.so && \
     ln -sf /usr/lib/x86_64-linux-gnu/libproxychains4.so.4 /usr/lib/x86_64-linux-gnu/libproxychains4.so && \
     ln -sf /usr/lib/x86_64-linux-gnu/libproxychains4.so.4 /lib/x86_64-linux-gnu/libproxychains4.so && \
