@@ -120,10 +120,13 @@ RUN apt update && \
     DEBIAN_FRONTEND=noninteractive apt install -y proxychains4 curl && \
     echo "strict_chain" > /etc/proxychains4.conf && \
     echo "proxy_dns" >> /etc/proxychains4.conf && \
+    echo "proxychains.conf.proxy_dns boolean true" >> /etc/proxychains4.conf && \
     echo "tcp_read_time_out 15000" >> /etc/proxychains4.conf && \
     echo "tcp_connect_time_out 8000" >> /etc/proxychains4.conf && \
-    echo "[ProxyList]" >> /etc/proxychains4.conf && \
-    echo "socks5 ${proxy_host} ${proxy_port} ${proxy_user} ${proxy_pass}" >> /etc/proxychains4.conf
+    echo "[ProxyList]" >> /etc/proxychains4.conf
+
+# Устанавливаем proxy через переменные окружения (ENV)
+RUN echo "socks5 $PROXY_HOST $PROXY_PORT $PROXY_USER $PROXY_PASS" >> /etc/proxychains4.conf
 EOF
 
 # Собираем кастомный образ
@@ -229,7 +232,7 @@ if ! docker run -d \
     -e PRELOAD_PROXYCHAINS=1 \
     -e PROXYCHAINS_CONF_PATH="/etc/proxychains4.conf" \
     mytitan/proxy-titan-edge-custom \
-    proxychains4 /usr/bin/titan-edge daemon start --init --url=https://cassini-locator.titannet.io:5000/rpc/v0
+   bash -c "export LD_PRELOAD=/usr/lib/libproxychains4.so && proxychains4 /usr/bin/titan-edge daemon start --init --url=https://cassini-locator.titannet.io:5000/rpc/v0"
 then
     echo -e "${RED}[✗] Ошибка запуска контейнера titan_node_$idx${NC}"
     return 1
@@ -253,7 +256,7 @@ fi
 
     local BIND_URL="https://api-test1.container1.titannet.io/api/v2/device/binding"
 
-    if docker exec "titan_node_$idx" proxychains4 /usr/bin/titan-edge bind --hash="$identity_code" "$BIND_URL"; then
+    if docker exec -it "titan_node_$idx" bash -c "export LD_PRELOAD=/usr/lib/libproxychains4.so && proxychains4 /usr/bin/titan-edge bind --hash=$identity_code https://api-test1.container1.titannet.io/api/v2/device/binding"; then
     echo -e "${GREEN}[✓] Bind OK для ноды $idx${NC}"
 else
     echo -e "${RED}[✗] Bind ошибка. Возможно, ключ не создан или identity неверен${NC}"
@@ -447,7 +450,7 @@ Description=Titan Node Service
 After=network.target docker.service
 
 [Service]
-ExecStart=$(realpath "$0") --auto-start
+ExecStart=/bin/bash -c 'https://raw.githubusercontent.com/ProNodeRunner/TitanSpoof/refs/heads/main/Titan.sh --auto-start'
 Restart=on-failure
 RestartSec=60
 
