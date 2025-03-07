@@ -7,6 +7,7 @@
 #   3) Комментарий, почему может быть много контейнеров (дубликаты)
 #   4) Улучшена очистка (удаляем конфиг + убиваем дубли)
 #   5) titan-edge daemon start --token <KEY> --port <PORT> вместо bind
+#   6) Исправлена ошибка unbalanced EOF/quotes
 ################################################################################
 
 ############### 1. Глобальные переменные и цвета ###############
@@ -92,7 +93,8 @@ generate_country_ip() {
     local first_octet=164
     local second_octet=138
     local third_octet=10
-    local fourth_octet=$(shuf -i 2-254 -n1)
+    local fourth_octet
+    fourth_octet=$(shuf -i 2-254 -n1)
     echo "${first_octet}.${second_octet}.${third_octet}.${fourth_octet}"
 }
 
@@ -147,10 +149,13 @@ create_node() {
 
     # Генерируем профиль
     IFS=',' read -r fake_cpu ram_gb ssd_gb <<< "$(generate_realistic_profile)"
-    local port=$(generate_random_port) # убрано условие про 1234
+    local port
+    port=$(generate_random_port) # убрано условие про 1234
     local volume="titan_data_$node_num"
-    local node_ip=$(generate_country_ip)
-    local mac=$(generate_fake_mac)
+    local node_ip
+    node_ip=$(generate_country_ip)
+    local mac
+    mac=$(generate_fake_mac)
 
     local cpu_period=100000
     local cpu_quota=$((fake_cpu*cpu_period))
@@ -179,13 +184,12 @@ create_node() {
         --memory "${ram_gb}g" \
         --memory-swap "$((ram_gb * 2))g" \
         --mac-address "$mac" \
-        -p ${port}:${port}/udp \
+        -p "${port}:${port}/udp" \
         -v "$volume:/root/.titanedge" \
         -e http_proxy="http://${proxy_user}:${proxy_pass}@${proxy_host}:${proxy_port}" \
         -e https_proxy="http://${proxy_user}:${proxy_pass}@${proxy_host}:${proxy_port}" \
         nezha123/titan-edge:latest \
-        bash -c "titan-edge daemon start --token ${identity_code} --port ${port} && tail -f /dev/null";
-    then
+        bash -c "titan-edge daemon start --token ${identity_code} --port ${port} && tail -f /dev/null"; then
         echo -e "${RED}[✗] Ошибка запуска контейнера${NC}"
         return 1
     fi
@@ -201,8 +205,7 @@ create_node() {
         >> "$CONFIG_FILE"
 
     echo -ne "${ORANGE}Инициализация ноды $node_num..."
-    # Тут убираем цикл ожидания "Ready", т.к. Titan Edge часто пишет другое
-    # Просто считаем, что нода запустилась
+    # Тут убираем цикл ожидания "Ready"
     echo -e " OK!${NC}"
 }
 
@@ -294,7 +297,7 @@ check_status() {
         local container_name="titan_node_$node_num"
         local status
         if docker ps | grep -q "$container_name"; then
-            # Покажем и зелёный шарик, и спуфинг
+            # Покажем зелёный шарик и спуфинг
             status="${GREEN}🟢 ALIVE${NC}"
         else
             status="${RED}🔴 DEAD${NC}"
@@ -393,12 +396,50 @@ cleanup() {
 
 ############### 9. Systemd-юнит для автозапуска ###############
 if [ ! -f /etc/systemd/system/titan-node.service ]; then
-    sudo bash -c "cat > /etc/systemd/system/titan-node.service <<EOF
+    # ВАЖНО: Используем двойные кавычки для bash -c,
+    # закрываем EOF без лишних кавычек
+    sudo bash -c 'cat > /etc/systemd/system/titan-node.service <<EOF
 [Unit]
 Description=Titan Node Service
 After=network.target docker.service
 
 [Service]
-ExecStart=$(realpath "$0") --auto-start
+ExecStart='"$(realpath "$0")"' --auto-start
 Restart=on-failure
-Restart
+RestartSec=60
+
+[Install]
+WantedBy=multi-user.target
+EOF'
+    sudo systemctl enable titan-node.service >/dev/null 2>&1
+fi
+
+############### 10. Точка входа ###############
+case $1 in
+    --auto-start)
+        auto_start_nodes
+    ;;
+    *)
+        while true; do
+            show_menu
+            read -p "Выбор: " choice
+            case $choice in
+                1) install_dependencies ;;
+                2)
+                    if ! command -v docker &>/dev/null || [ ! -f "/usr/bin/jq" ]; then
+                        echo -e "\n${RED}ОШИБКА: Сначала установите компоненты (пункт 1)!${NC}"
+                        sleep 2
+                        continue
+                    fi
+                    setup_nodes
+                    ;;
+                3) check_status ;;
+                4) show_logs ;;
+                5) restart_nodes ;;
+                6) cleanup ;;
+                7) exit 0 ;;
+                *) echo -e "${RED}Неверный выбор!${NC}"; sleep 1 ;;
+            esac
+        done
+    ;;
+esac
