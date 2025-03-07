@@ -217,6 +217,7 @@ if ! docker run -d \
     -v "$volume:/root/.titanedge" \
     -e ALL_PROXY="socks5://${proxy_user}:${proxy_pass}@${proxy_host}:${proxy_port}" \
     -e PRELOAD_PROXYCHAINS=1 \
+    -e PROXYCHAINS_CONF_PATH="/etc/proxychains4.conf" \
     mytitan/proxy-titan-edge-custom \
     proxychains4 /usr/bin/titan-edge daemon start --init --url=https://cassini-locator.titannet.io:5000/rpc/v0
 
