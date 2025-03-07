@@ -58,6 +58,21 @@ echo -e "${ORANGE}[2/7] Установка пакетов...${NC}"
     jq screen cgroup-tools net-tools ccze netcat iptables-persistent bc \
     ufw git build-essential
 
+# Установка proxychains4 и настройка конфигурации
+echo -e "${ORANGE}[2.5/5] Установка и настройка proxychains4...${NC}"
+sudo apt-get install -y proxychains4
+
+# Создание новой конфигурации для proxychains4
+sudo bash -c 'cat > /etc/proxychains4.conf <<EOL
+strict_chain
+proxy_dns
+tcp_read_time_out 15000
+tcp_connect_time_out 8000
+[ProxyList]
+socks5 $proxy_host $proxy_port $proxy_user $proxy_pass
+EOL'
+
+echo -e "${GREEN}[✓] Proxychains4 установлен и настроен!${NC}"
 
 
     echo -e "${ORANGE}[3/7] Настройка брандмауэра...${NC}"
