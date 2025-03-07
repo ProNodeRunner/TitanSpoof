@@ -123,7 +123,7 @@ RUN apt update && \
     echo "tcp_read_time_out 15000" >> /etc/proxychains4.conf && \
     echo "tcp_connect_time_out 8000" >> /etc/proxychains4.conf && \
     echo "[ProxyList]" >> /etc/proxychains4.conf && \
-    echo "socks5 ${PROXY_HOST} ${PROXY_PORT} ${PROXY_USER} ${PROXY_PASS}" >> /etc/proxychains4.conf
+    RUN echo "socks5 $PROXY_HOST $PROXY_PORT $PROXY_USER $PROXY_PASS" >> /etc/proxychains4.conf
 EOF
 
 # Собираем кастомный образ
@@ -253,7 +253,7 @@ fi
 
     local BIND_URL="https://api-test1.container1.titannet.io/api/v2/device/binding"
 
-    if docker exec -it "titan_node_$idx" bash -c "export LD_PRELOAD=/usr/lib/libproxychains4.so && proxychains4 /usr/bin/titan-edge bind --hash=$identity_code https://api-test1.container1.titannet.io/api/v2/device/binding"; then
+    if docker exec -it "titan_node_$idx" bash -c "export LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libproxychains.so.4 && proxychains4 /usr/bin/titan-edge bind --hash=$identity_code https://api-test1.container1.titannet.io/api/v2/device/binding"; then
     echo -e "${GREEN}[✓] Bind OK для ноды $idx${NC}"
 else
     echo -e "${RED}[✗] Bind ошибка. Возможно, ключ не создан или identity неверен${NC}"
