@@ -97,7 +97,7 @@ https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
 echo -e "${ORANGE}[5/7] Сборка кастомного Docker-образа с proxychains4...${NC}"
 
 # Создание Dockerfile
-cat > Dockerfile << EOF
+cat <<EOF > Dockerfile
 FROM nezha123/titan-edge:latest
 
 RUN apt update && \
@@ -110,6 +110,7 @@ RUN apt update && \
     echo "[ProxyList]" >> /etc/proxychains4.conf && \
     apt clean && rm -rf /var/lib/apt/lists/*
 EOF
+
 
 docker build -t mytitan/proxy-titan-edge-custom .
 
