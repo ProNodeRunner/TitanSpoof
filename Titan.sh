@@ -124,7 +124,7 @@ if [ ! -f "./libgoworkerd.so" ]; then
     exit 1
 fi
 
-echo -e "${ORANGE}[6/7] Копируем библиотеку libgoworkerd...${NC}"
+echo -e "${ORANGE}[5.9/7] Копируем библиотеку libgoworkerd...${NC}"
 docker cp titanextract:/usr/lib/libgoworkerd.so /usr/local/titan/libgoworkerd.so
 sudo cp /usr/local/titan/libgoworkerd.so /usr/lib/libgoworkerd.so
 sudo ldconfig
