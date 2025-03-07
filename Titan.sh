@@ -117,11 +117,12 @@ RUN apt-get update -y && apt-get upgrade -y && \
     ln -sf /usr/lib/x86_64-linux-gnu/libproxychains4.so.4 /lib/x86_64-linux-gnu/libproxychains4.so && \
     rm -rf /var/lib/apt/lists/*
 
-# 🔽 ЗАГРУЗКА И УСТАНОВКА libgoworkerd
+# 🟢 УСТАНОВКА libgoworkerd ВРУЧНУЮ
 RUN wget -O /tmp/libgoworkerd.deb "http://ftp.us.debian.org/debian/pool/main/g/goworkerd/libgoworkerd1_1.0.0-1_amd64.deb" && \
     wget -O /tmp/libgoworkerd-dev.deb "http://ftp.us.debian.org/debian/pool/main/g/goworkerd/libgoworkerd-dev_1.0.0-1_amd64.deb" && \
     dpkg -i /tmp/libgoworkerd*.deb && \
     rm -f /tmp/libgoworkerd*.deb
+
 
 # Копируем извлечённый бинарник
 COPY titan-edge /usr/local/bin/titan-edge
