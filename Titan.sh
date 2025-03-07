@@ -1,10 +1,9 @@
 #!/bin/bash
 ################################################################################
 # TITAN BLOCKCHAIN NODE FINAL INSTALLATION SCRIPT
-# (ProxyChains + Socks5 + Titan) + multi-stage build to extract Titan Edge from nezha123/titan-edge
-#
-# Решает ошибку "Cannot connect to the Docker daemon ..." при RUN docker pull ...
-# через многоступенчатую сборку "FROM nezha123/titan-edge:latest AS titan"
+# (ProxyChains + Socks5 + Titan) using:
+# - "docker pull nezha123/titan-edge" + docker cp titanextract:/usr/local/bin/titan-edge ...
+# - Then build local image “mytitan/proxy-titan-edge”
 ################################################################################
 
 CONFIG_FILE="/etc/titan_nodes.conf"
@@ -22,7 +21,7 @@ declare -A USED_PORTS=()
 declare -A USED_PROXIES=()
 
 ###############################################################################
-# (A) Логотип/меню
+# (A) Логотип и меню
 ###############################################################################
 show_logo() {
     local raw
@@ -43,59 +42,64 @@ show_menu() {
 }
 
 ###############################################################################
-# (1) Установка компонентов (Docker + build)
+# (1) Установка компонентов
 ###############################################################################
 install_dependencies() {
-    echo -e "${ORANGE}[1/6] Инициализация системы...${NC}"
+    echo -e "${ORANGE}[1/7] Инициализация системы...${NC}"
     export DEBIAN_FRONTEND=noninteractive
     sudo bash -c "echo 'iptables-persistent iptables-persistent/autosave_v4 boolean false' | debconf-set-selections"
     sudo bash -c "echo 'iptables-persistent iptables-persistent/autosave_v6 boolean false' | debconf-set-selections"
 
     sudo apt-get update -yq && sudo apt-get upgrade -yq
 
-    echo -e "${ORANGE}[2/6] Установка пакетов...${NC}"
+    echo -e "${ORANGE}[2/7] Установка пакетов...${NC}"
     sudo apt-get install -yq \
-        apt-transport-https ca-certificates curl gnupg lsb-release \
-        jq screen cgroup-tools net-tools ccze netcat iptables-persistent bc \
-        ufw git build-essential
+      apt-transport-https ca-certificates curl gnupg lsb-release \
+      jq screen cgroup-tools net-tools ccze netcat iptables-persistent bc \
+      ufw git build-essential
 
-    echo -e "${ORANGE}[3/6] Настройка брандмауэра...${NC}"
+    echo -e "${ORANGE}[3/7] Настройка брандмауэра...${NC}"
     sudo ufw allow 30000:40000/udp || true
     sudo ufw reload || true
 
-    echo -e "${ORANGE}[4/6] Установка Docker...${NC}"
+    echo -e "${ORANGE}[4/7] Установка Docker...${NC}"
+    # Убираем подтверждение
     sudo rm -f /usr/share/keyrings/docker-archive-keyring.gpg
     curl -fsSL https://download.docker.com/linux/ubuntu/gpg | \
-        sudo gpg --batch --yes --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+      sudo gpg --batch --yes --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
 
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] \
 https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
-        | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
+      | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
 
     sudo apt-get update -yq
     sudo apt-get install -yq docker-ce docker-ce-cli containerd.io
     sudo systemctl enable --now docker
     sudo usermod -aG docker "$USER"
 
-    echo -e "${ORANGE}[5/6] Сборка Docker-образа Titan+ProxyChains (multi-stage)...${NC}"
-    # Dockerfile
-    cat <<'EOF_DOCKER' > Dockerfile.titan
-# --- STAGE 1: extract from nezha123/titan-edge
-FROM nezha123/titan-edge:latest AS titan
+    echo -e "${ORANGE}[5/7] Извлечение titan-edge из nezha123/titan-edge...${NC}"
+    sudo docker pull nezha123/titan-edge:latest
+    sudo docker create --name titanextract nezha123/titan-edge:latest
+    # Предположим бинарник в /usr/local/bin/titan-edge:
+    # Если это не так, ls -R / чтобы найти, затем поправить путь
+    sudo docker cp titanextract:/usr/local/bin/titan-edge ./titan-edge || {
+        echo -e "${RED}Не удалось скопировать /usr/local/bin/titan-edge из образа nezha123/titan-edge!${NC}"
+        sudo docker rm titanextract
+        return 1
+    }
+    sudo docker rm titanextract
+    sudo chmod +x titan-edge
 
-# --- STAGE 2: build final
+    echo -e "${ORANGE}[6/7] Сборка Docker-образа Titan+ProxyChains...${NC}"
+    cat <<'EOF_DOCKER' > Dockerfile.titan
 FROM ubuntu:22.04
 ENV DEBIAN_FRONTEND=noninteractive
-
-# Install dependencies
 RUN apt-get update -y && apt-get upgrade -y && \
-    apt-get install -y proxychains4 libproxychains4 wget ca-certificates libstdc++6 && \
+    apt-get install -y proxychains4 libproxychains4 libstdc++6 && \
     rm -rf /var/lib/apt/lists/*
 
-# Copy from stage1
-COPY --from=titan /usr/local/bin/titan-edge /usr/local/bin/titan-edge
-
-# Ensure file is executable
+# Копируем извлечённый бинарник
+COPY titan-edge /usr/local/bin/titan-edge
 RUN chmod +x /usr/local/bin/titan-edge && ln -s /usr/local/bin/titan-edge /usr/bin/titan-edge
 
 # ProxyChains config
@@ -122,7 +126,7 @@ EOF_RUN
 
     sudo docker build -t mytitan/proxy-titan-edge:latest -f Dockerfile.titan .
 
-    echo -e "${ORANGE}[6/6] Завершение установки...${NC}"
+    echo -e "${ORANGE}[7/7] Завершение установки...${NC}"
     echo -e "${GREEN}[✓] Titan + ProxyChains готово!${NC}"
     sleep 2
 }
@@ -131,11 +135,11 @@ EOF_RUN
 # (2) Генерация IP, порт, CPU/RAM/SSD
 ###############################################################################
 generate_country_ip() {
-    local first_octet=164
-    local second_octet=138
-    local third_octet=10
-    local fourth=$(shuf -i 2-254 -n1)
-    echo "${first_octet}.${second_octet}.${third_octet}.${fourth}"
+    local first_oct=164
+    local second_oct=138
+    local third_oct=10
+    local forth_oct=$(shuf -i 2-254 -n1)
+    echo "${first_oct}.${second_oct}.${third_oct}.${forth_oct}"
 }
 
 generate_random_port() {
@@ -212,7 +216,9 @@ create_node() {
     echo -e "${ORANGE}Спуф IP: $node_ip -> порт $host_port${NC}"
     echo -e "${ORANGE}[*] Bind ноды $idx (--hash=${identity_code})...${NC}"
 
+    # Подождём 10s
     sleep 10
+
     local BIND_URL="https://api-test1.container1.titannet.io/api/v2/device/binding"
     if ! docker exec "titan_node_$idx" proxychains4 /usr/bin/titan-edge bind --hash="$identity_code" "$BIND_URL" 2>&1; then
         echo -e "${RED}[✗] Bind ошибка. Возможно, ключ не создан или identity неверен${NC}"
@@ -273,6 +279,7 @@ setup_nodes() {
             fi
         done
     done
+
     echo -e "${GREEN}\nСоздано нод: ${node_count}${NC}"
     read -p $'\nНажмите любую клавишу...' -n1 -s
 }
@@ -324,10 +331,11 @@ check_status() {
 show_logs() {
     clear
     if [ ! -f "$CONFIG_FILE" ]; then
-        echo -e "${RED}Нет конфига, ноды не создавались?${NC}"
+        echo -e "${RED}Нет $CONFIG_FILE, ноды не создавались?${NC}"
         read -p $'\nНажмите любую клавишу...' -n1 -s
         return
     fi
+
     while IFS='|' read -r idx code mac hport fip stamp pxy hwdata; do
         local cname="titan_node_$idx"
         echo -e "\n=== Логи $cname (tail=5) ==="
@@ -337,6 +345,7 @@ show_logs() {
             echo "(Контейнер не запущен)"
         fi
     done < "$CONFIG_FILE"
+
     read -p $'\nНажмите любую клавишу...' -n1 -s
 }
 
@@ -394,7 +403,6 @@ cleanup() {
     sleep 3
 }
 
-# systemd unit
 if [ ! -f /etc/systemd/system/titan-node.service ]; then
     sudo tee /etc/systemd/system/titan-node.service >/dev/null <<EOF
 [Unit]
@@ -417,7 +425,6 @@ auto_start_nodes() {
         echo -e "${RED}Нет $CONFIG_FILE, автозапуск невозможен!${NC}"
         exit 1
     fi
-
     while IFS='|' read -r idx code mac hport fip stamp pxy hw; do
         local proxy_host proxy_port proxy_user proxy_pass
         IFS=':' read -r proxy_host proxy_port proxy_user proxy_pass <<< "$pxy"
@@ -425,6 +432,9 @@ auto_start_nodes() {
     done < "$CONFIG_FILE"
 }
 
+###############################################################################
+# MAIN
+###############################################################################
 case "$1" in
     --auto-start)
         auto_start_nodes
