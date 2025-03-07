@@ -92,11 +92,10 @@ cat > Dockerfile.titan <<EOF
 FROM docker.io/library/ubuntu:22.04
 
 COPY libgoworkerd.so /usr/lib/libgoworkerd.so
-COPY titan-edge /usr/bin/titan-edge
+COPY titan-edge /usr/local/bin/titan-edge
 
 RUN ldconfig
-RUN chmod +x /usr/bin/titan-edge
-
+RUN chmod +x /usr/local/bin/titan-edge && ln -s /usr/local/bin/titan-edge /usr/bin/titan-edge
 
 RUN apt update && \
     DEBIAN_FRONTEND=noninteractive apt install -y proxychains4 curl && \
@@ -117,10 +116,21 @@ EOF
     docker rm -f temp_titan
     chmod +x ./titan-edge
 
+if [ ! -f "./titan-edge" ]; then
+    echo -e "${RED}Ошибка: файл titan-edge отсутствует! Попробуем извлечь...${NC}"
+    
+    # Создаём контейнер и копируем бинарник
+    docker create --name titanextract nezha123/titan-edge:latest
+    docker cp titanextract:/usr/bin/titan-edge ./titan-edge
+    docker rm -f titanextract
+
     if [ ! -f "./titan-edge" ]; then
-        echo -e "${RED}Ошибка: файл titan-edge отсутствует!${NC}"
+        echo -e "${RED}Ошибка: Не удалось извлечь titan-edge!${NC}"
         exit 1
     fi
+    chmod +x ./titan-edge
+fi
+
 
     echo -e "${ORANGE}[7/7] Завершение установки...${NC}"
     echo -e "${GREEN}[✓] Titan + ProxyChains готово!${NC}"
