@@ -114,9 +114,12 @@ RUN apt update && \
     echo "[ProxyList]" >> /etc/proxychains4.conf
 EOF
 
-docker build -t mytitan/proxy-titan-edge-custom .
-
+# Выполняем сборку образа и проверяем результат
+docker build -t mytitan/proxy-titan-edge-custom -f Dockerfile.titan . || {
+    echo -e "${RED}[✗] Ошибка сборки Docker-образа!${NC}"
     exit 1
+}
+
 }
 sudo docker rm -f titanextract
 chmod +x ./titan-edge
