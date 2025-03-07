@@ -113,7 +113,8 @@ RUN apt update && \
     echo "tcp_read_time_out 15000" >> /etc/proxychains4.conf && \
     echo "tcp_connect_time_out 8000" >> /etc/proxychains4.conf && \
     echo "[ProxyList]" >> /etc/proxychains4.conf && \
-    echo "socks5 $proxy_host $proxy_port $proxy_user $proxy_pass" >> /etc/proxychains4.conf
+    echo "DEBUG: socks5 $proxy_host $proxy_port $proxy_user $proxy_pass"
+    echo "socks5 $proxy_host $proxy_port $proxy_user $proxy_pass" >> /etc/proxychains4.conf || exit 1
 EOF
 
 # Собираем кастомный образ
@@ -219,6 +220,7 @@ if ! docker run -d \
     -e PRELOAD_PROXYCHAINS=1 \
     -e PROXYCHAINS_CONF_PATH="/etc/proxychains4.conf" \
     mytitan/proxy-titan-edge-custom \
+    cat /etc/proxychains4.conf
     proxychains4 /usr/bin/titan-edge daemon start --init --url=https://cassini-locator.titannet.io:5000/rpc/v0
 
 then
