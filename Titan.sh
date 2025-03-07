@@ -264,11 +264,12 @@ if ! docker run -d \
     -e ALL_PROXY="socks5://${proxy_user}:${proxy_pass}@${proxy_host}:${proxy_port}" \
     -e PRELOAD_PROXYCHAINS=1 \
     mytitan/proxy-titan-edge:latest \
-    daemon start --init --url=https://cassini-locator.titannet.io:5000/rpc/v0
+    /usr/bin/titan-edge daemon start --init --url=https://cassini-locator.titannet.io:5000/rpc/v0
 then
     echo -e "${RED}[✗] Ошибка запуска контейнера titan_node_$idx${NC}"
     return 1
 fi
+
 
 
     sudo ip addr add "${node_ip}/24" dev "$NETWORK_INTERFACE" 2>/dev/null
