@@ -1,12 +1,6 @@
 #!/bin/bash
 ################################################################################
 # TITAN BLOCKCHAIN NODE FINAL INSTALLATION SCRIPT
-# Изменения:
-#   1) Убрано повторное show_logo в install_dependencies, меню выводится один раз.
-#   2) Логотип заворачиваем в sed, чтобы убрать возможные цветовые сбросы (\033...),
-#      иначе сбивается оранжевый цвет меню.
-#   3) Прокси используем HTTP-формат (http://host:port:user:pass)
-#   4) Убран --storage-opt, используем --memory и --memory-swap
 ################################################################################
 
 ############### 1. Глобальные переменные и цвета ###############
@@ -18,15 +12,13 @@ RED='\033[0;31m'
 NC='\033[0m'
 NETWORK_INTERFACE=$(ip route | grep default | awk '{print $5}' | head -n1)
 
-# Массивы для проверки занятых ключей и портов
 declare -A USED_KEYS=()
 declare -A USED_PORTS=()
 
 ############### 2. Отрисовка логотипа, меню, прогресс ###############
 show_logo() {
-    # Скачиваем логотип и убираем возможные цветовые коды
     local logo
-    logo=$(curl -sSf "$LOGO_URL" 2>/dev/null | sed -E 's/\\x1B\\[[0-9;]*[A-Za-z]//g')
+    logo=$(curl -sSf "$LOGO_URL" 2>/dev/null | sed -E 's/\x1B\[[0-9;]*[A-Za-z]//g')
     if [[ -z "$logo" ]]; then
         echo "=== TITAN NODE MANAGER v22 ==="
     else
@@ -36,10 +28,10 @@ show_logo() {
 
 show_menu() {
     clear
-    tput setaf 3 # Устанавливаем оранжевый цвет
+    tput setaf 3 # Оранжевый цвет
     show_logo
     echo -e "1) Установить компоненты\n2) Создать ноды\n3) Проверить статус\n4) Показать логи\n5) Перезапустить\n6) Очистка\n7) Выход"
-    tput sgr0 # Сбрасываем цвет обратно в стандартный
+    tput sgr0
 }
 
 progress_step() {
@@ -60,7 +52,8 @@ install_dependencies() {
     progress_step 2 5 "Установка пакетов"
     sudo apt-get install -yq \
         apt-transport-https ca-certificates curl gnupg lsb-release \
-        jq screen cgroup-tools net-tools ccze netcat iptables-persistent bc
+        jq screen cgroup-tools net-tools ccze netcat iptables-persistent bc \
+        ufw  # <-- Добавили установку ufw
 
     progress_step 3 5 "Настройка брандмауэра"
     sudo ufw allow 1234/udp
@@ -82,9 +75,8 @@ https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
     sleep 1
 }
 
-############### 4. Генерация IP, портов, профилей ###############
+############### 4. Генерация IP, портов ###############
 generate_country_ip() {
-    # По условию пример: 164.138.10.xxx
     local first_octet=164
     local second_octet=138
     local third_octet=10
@@ -94,7 +86,6 @@ generate_country_ip() {
 }
 
 generate_random_port() {
-    # Если это первая нода, возвращаем 1234
     if [[ $1 -eq 1 ]]; then
         echo "1234"
         return
@@ -126,7 +117,6 @@ check_proxy() {
     local proxy_user=$3
     local proxy_pass=$4
 
-    # HTTP proxy
     local output
     output=$(curl -m 5 -s --proxy "http://${proxy_host}:${proxy_port}" --proxy-user "${proxy_user}:${proxy_pass}" https://api.ipify.org || echo "FAILED")
     if [[ "$output" == "FAILED" ]]; then
@@ -144,7 +134,6 @@ create_node() {
     local proxy_user="$5"
     local proxy_pass="$6"
 
-    # Генерация фейковых CPU, RAM, SSD
     IFS=',' read -r fake_cpu ram_gb ssd_gb <<< "$(generate_realistic_profile)"
     local port
     port=$(generate_random_port "$node_num")
@@ -157,21 +146,17 @@ create_node() {
     local cpu_period=100000
     local cpu_quota=$((fake_cpu*cpu_period))
 
-    # Удаляем старые контейнер и том
     docker rm -f "titan_node_$node_num" 2>/dev/null
     docker volume create "$volume" >/dev/null || {
         echo -e "${RED}[✗] Ошибка создания тома $volume${NC}"
         return 1
     }
 
-    # Пишем ключ в том
     echo "$identity_code" | docker run -i --rm -v "$volume:/data" busybox sh -c "cat > /data/identity.key" || {
         echo -e "${RED}[✗] Ошибка записи ключа${NC}"
         return 1
     }
 
-    # Запуск ноды
-    # Удалил --storage-opt, вместо этого ставим --memory и --memory-swap
     if ! docker run -d \
         --name "titan_node_$node_num" \
         --restart unless-stopped \
@@ -190,17 +175,16 @@ create_node() {
         return 1
     fi
 
-    # Добавляем IP
     sudo ip addr add "${node_ip}/24" dev "$NETWORK_INTERFACE" 2>/dev/null
     sudo iptables -t nat -A PREROUTING -i "$NETWORK_INTERFACE" -p udp --dport "$port" -j DNAT --to-destination "$node_ip:$port"
     sudo netfilter-persistent save >/dev/null 2>&1
 
-    # Сохраняем конфигурацию
-    echo "${node_num}|${identity_code}|${mac}|${port}|${node_ip}|$(date +%s)|${proxy_host}:${proxy_port}:${proxy_user}:${proxy_pass}" >> "$CONFIG_FILE"
+    echo "${node_num}|${identity_code}|${mac}|${port}|${node_ip}|$(date +%s)|${proxy_host}:${proxy_port}:${proxy_user}:${proxy_pass}" \
+        >> "$CONFIG_FILE"
 
-    # Ожидаем Ready (если такой строки нет в логе, замените на другую!)
     echo -ne "${ORANGE}Инициализация ноды $node_num..."
-    while ! docker logs "titan_node_$node_num" 2>&1 | grep -q "Ready"; do
+    # Вместо "Ready" используем "Edge registered successfully" (из лога)
+    while ! docker logs "titan_node_$node_num" 2>&1 | grep -q "Edge registered successfully"; do
         sleep 5
         echo -n "."
     done
@@ -219,7 +203,6 @@ auto_start_nodes() {
         local proxy_host proxy_port proxy_user proxy_pass
         IFS=':' read -r proxy_host proxy_port proxy_user proxy_pass <<< "$proxy_data"
 
-        # Пропускаем, если контейнер уже работает
         if docker ps --format '{{.Names}}' | grep -q "titan_node_$node_num"; then
             continue
         fi
@@ -256,7 +239,6 @@ setup_nodes() {
             fi
         done
 
-        # Ключ ноды
         while true; do
             read -p "Введите ключ для ноды $i: " key
             local key_upper=${key^^}
@@ -277,28 +259,28 @@ setup_nodes() {
             fi
         done
     done
-    echo -e "\\n${GREEN}Создано нод: ${node_count}${NC}"
-    read -p $'\\nНажмите любую клавишу...' -n1 -s
+    echo -e "\n${GREEN}Создано нод: ${node_count}${NC}"
+    read -p $'\nНажмите любую клавишу...' -n1 -s
 }
 
 check_status() {
     clear
-    printf "${ORANGE}%-20s | %-17s | %-15s | %-15s | %s${NC}\\n" "Контейнер" "MAC" "Порт" "IP" "Статус"
+    printf "${ORANGE}%-20s | %-17s | %-15s | %-15s | %s${NC}\n" "Контейнер" "MAC" "Порт" "IP" "Статус"
 
     while IFS='|' read -r node_num node_key mac port ip timestamp proxy_data; do
         local container_name="titan_node_$node_num"
         local status
         if docker ps | grep -q "$container_name"; then
-            status=\"${GREEN}🟢 ALIVE${NC}\"
+            status="${GREEN}🟢 ALIVE${NC}"
         else
-            status=\"${RED}🔴 DEAD${NC}\"
+            status="${RED}🔴 DEAD${NC}"
         fi
-        printf "%-20s | %-17s | %-15s | %-15s | %b\\n" "$container_name" "$mac" "$port" "$ip" "$status"
+        printf "%-20s | %-17s | %-15s | %-15s | %b\n" "$container_name" "$mac" "$port" "$ip" "$status"
     done < "$CONFIG_FILE"
 
-    echo -e "\\n${ORANGE}РЕСУРСЫ:${NC}"
+    echo -e "\n${ORANGE}РЕСУРСЫ:${NC}"
     docker stats --no-stream --format "{{.Name}}: {{.CPUPerc}} CPU / {{.MemUsage}}" | grep "titan_node"
-    read -p $'\\nНажмите любую клавишу...' -n1 -s
+    read -p $'\nНажмите любую клавишу...' -n1 -s
 }
 
 show_logs() {
@@ -311,7 +293,7 @@ show_logs() {
     else
         echo "$logs"
     fi
-    read -p $'\\nНажмите любую клавишу...' -n1 -s
+    read -p $'\nНажмите любую клавишу...' -n1 -s
 }
 
 restart_nodes() {
@@ -332,7 +314,7 @@ restart_nodes() {
 }
 
 cleanup() {
-    echo -e "${ORANGE}\\n[!] ПОЛНАЯ ОЧИСТКА [!]${NC}"
+    echo -e "${ORANGE}\n[!] ПОЛНАЯ ОЧИСТКА [!]${NC}"
 
     echo -e "${ORANGE}[1/6] Удаление контейнеров...${NC}"
     docker ps -aq --filter "name=titan_node" | xargs -r docker rm -f
@@ -358,7 +340,7 @@ cleanup() {
     echo -e "${ORANGE}[6/6] Очистка кэша...${NC}"
     sudo rm -rf /tmp/fake_* ~/.titanedge /var/cache/apt/archives/*.deb
 
-    echo -e "\\n${GREEN}[✓] Все следы удалены! Перезагрузите сервер.${NC}"
+    echo -e "\n${GREEN}[✓] Все следы удалены! Перезагрузите сервер.${NC}"
     sleep 3
 }
 
@@ -393,7 +375,7 @@ case $1 in
                 1) install_dependencies ;;
                 2)
                     if ! command -v docker &>/dev/null || [ ! -f "/usr/bin/jq" ]; then
-                        echo -e "\\n${RED}ОШИБКА: Сначала установите компоненты (пункт 1)!${NC}"
+                        echo -e "\n${RED}ОШИБКА: Сначала установите компоненты (пункт 1)!${NC}"
                         sleep 2
                         continue
                     fi
