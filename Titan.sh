@@ -37,13 +37,10 @@ show_logo() {
 
 show_menu() {
     clear
-    # Оранжевый цвет
-    echo -e "${ORANGE}"
+    tput setaf 3 # Устанавливаем оранжевый цвет
     show_logo
-    # Меню
     echo -e "1) Установить компоненты\n2) Создать ноды\n3) Проверить статус\n4) Показать логи\n5) Перезапустить\n6) Очистка\n7) Выход"
-    # Сброс цвета
-    echo -ne "${NC}"
+    tput sgr0 # Сбрасываем цвет обратно в стандартный
 }
 
 progress_step() {
@@ -133,10 +130,11 @@ check_proxy() {
 
     # HTTP proxy
     local output
-    output=$(curl -m 5 -s --proxy "http://${proxy_host}:${proxy_port}" --proxy-user "${proxy_user}:${proxy_pass}" https://api.ipify.org)
-    if [[ -z "$output" ]]; then
-        return 1
-    fi
+output=$(curl -m 5 -s --proxy "http://${proxy_host}:${proxy_port}" --proxy-user "${proxy_user}:${proxy_pass}" https://api.ipify.org || echo "FAILED")
+if [[ "$output" == "FAILED" ]]; then
+    return 1
+fi
+
     return 0
 }
 
@@ -171,20 +169,17 @@ create_node() {
 
     # Запуск ноды с http_proxy / https_proxy
     if ! docker run -d \
-        --name "titan_node_$node_num" \
-        --restart unless-stopped \
-        --cpu-period="$cpu_period" \
-        --cpu-quota="$cpu_quota" \
-        --memory "${ram_gb}g" \
-        --storage-opt "size=${ssd_gb}g" \
-        --mac-address "$mac" \
-        -p ${port}:${port}/udp \
-        -v "$volume:/root/.titanedge" \
-        -e http_proxy="http://${proxy_user}:${proxy_pass}@${proxy_host}:${proxy_port}" \
-        -e https_proxy="http://${proxy_user}:${proxy_pass}@${proxy_host}:${proxy_port}" \
-        nezha123/titan-edge:latest \
-        --bind "0.0.0.0:${port}" \
-        --storage-size "${ssd_gb}GB"
+    --name "titan_node_$node_num" \
+    --restart unless-stopped \
+    --cpu-period="$cpu_period" \
+    --cpu-quota="$cpu_quota" \
+    --memory "${ram_gb}g" \
+    --memory-swap "$((ram_gb * 2))g" \  # <--- Вместо storage-opt используем swap
+    --mac-address "$mac" \
+    -p ${port}:${port}/udp \
+    -v "$volume:/root/.titanedge" \
+    nezha123/titan-edge:latest \
+    --bind "0.0.0.0:${port}";
     then
         echo -e "${RED}[✗] Ошибка запуска контейнера${NC}"
         return 1
@@ -213,16 +208,13 @@ auto_start_nodes() {
         exit 1
     fi
 
-    while IFS='|' read -r node_num node_key _ _ _ _ proxy_data; do
-        [[ -z "$node_num" || -z "$node_key" ]] && continue
-        local proxy_host proxy_port proxy_user proxy_pass
-        IFS=':' read -r proxy_host proxy_port proxy_user proxy_pass <<< "$proxy_data"
-
-        if docker ps --format '{{.Names}}' | grep -q "titan_node_$node_num"; then
-            continue
-        fi
-        create_node "$node_num" "$node_key" "$proxy_host" "$proxy_port" "$proxy_user" "$proxy_pass"
-    done < "$CONFIG_FILE"
+while IFS='|' read -r node_num node_key _ _ _ _ proxy_data; do
+    [[ -z "$node_num" || -z "$node_key" ]] && continue
+    if docker ps --format '{{.Names}}' | grep -q "titan_node_$node_num"; then
+        continue  # Если контейнер уже работает, пропускаем
+    fi
+    create_node "$node_num" "$node_key" "$proxy_host" "$proxy_port" "$proxy_user" "$proxy_pass"
+done < "$CONFIG_FILE"
 }
 
 ############### 8. Меню и функции управления ###############
