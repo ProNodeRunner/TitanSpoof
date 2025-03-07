@@ -96,6 +96,10 @@ if [ ! -f "./titan-edge" ]; then
     echo -e "${RED}Ошибка: файл titan-edge отсутствует!${NC}"
     exit 1
 fi
+echo -e "${ORANGE}[6/7] Копируем библиотеку libgoworkerd...${NC}"
+docker cp titanextract:/usr/lib/libgoworkerd.so /usr/local/titan/libgoworkerd.so
+sudo cp /usr/local/titan/libgoworkerd.so /usr/lib/libgoworkerd.so
+sudo ldconfig
 
 echo -e "${ORANGE}[6/7] Сборка Docker-образа Titan+ProxyChains...${NC}"
 
@@ -110,18 +114,10 @@ cat <<'EOF_DOCKER' > Dockerfile.titan
 FROM ubuntu:22.04
 ENV DEBIAN_FRONTEND=noninteractive
 
-RUN apt-get update -y && apt-get upgrade -y && \
-    apt-get install -y proxychains4 libproxychains4 libstdc++6 wget && \
-    ln -sf /usr/lib/x86_64-linux-gnu/libproxychains4.so.4 /usr/lib/libproxychains4.so && \
-    ln -sf /usr/lib/x86_64-linux-gnu/libproxychains4.so.4 /usr/lib/x86_64-linux-gnu/libproxychains4.so && \
-    ln -sf /usr/lib/x86_64-linux-gnu/libproxychains4.so.4 /lib/x86_64-linux-gnu/libproxychains4.so && \
-    rm -rf /var/lib/apt/lists/*
+# 🟢 Настройка библиотеки libgoworkerd
+COPY libgoworkerd.so /usr/lib/libgoworkerd.so
+RUN ldconfig
 
-# 🟢 УСТАНОВКА libgoworkerd ВРУЧНУЮ
-RUN wget -O /tmp/libgoworkerd.deb "http://ftp.us.debian.org/debian/pool/main/g/goworkerd/libgoworkerd1_1.0.0-1_amd64.deb" && \
-    wget -O /tmp/libgoworkerd-dev.deb "http://ftp.us.debian.org/debian/pool/main/g/goworkerd/libgoworkerd-dev_1.0.0-1_amd64.deb" && \
-    dpkg -i /tmp/libgoworkerd*.deb && \
-    rm -f /tmp/libgoworkerd*.deb
 
 
 # Копируем извлечённый бинарник
