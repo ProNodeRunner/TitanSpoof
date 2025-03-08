@@ -112,25 +112,22 @@ https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
         exit 1
     }
 
-    if docker exec "$CONTAINER_ID" test -f /usr/local/bin/titan-edge; then
-        docker cp "$CONTAINER_ID":/usr/local/bin/titan-edge ./titan-edge
-    else
+    EDGE_PATH=$(docker exec "$CONTAINER_ID" find / -type f -name "titan-edge" 2>/dev/null | head -n 1)
+
+    if [ -z "$EDGE_PATH" ]; then
         echo -e "${ORANGE}[*] titan-edge не найден стандартным способом! Ищем в overlay2...${NC}"
         CONTAINER_PATH=$(docker inspect --format='{{.GraphDriver.Data.UpperDir}}' "$CONTAINER_ID" 2>/dev/null)
-        if [ -n "$CONTAINER_PATH" ]; then
-            echo -e "${GREEN}Путь к контейнеру найден: $CONTAINER_PATH${NC}"
-            if [ -f "$CONTAINER_PATH/usr/bin/titan-edge" ]; then
-                echo -e "${GREEN}Копируем бинарник из overlay2!${NC}"
-                cp "$CONTAINER_PATH/usr/bin/titan-edge" ./titan-edge
-            fi
-        fi
+        EDGE_PATH=$(find "$CONTAINER_PATH" -type f -name "titan-edge" | head -n 1)
+        cp "$EDGE_PATH" ./titan-edge
+    else
+        docker cp "$CONTAINER_ID":"$EDGE_PATH" ./titan-edge
+    fi
 
-        if [ ! -f "./titan-edge" ]; then
-            echo -e "${RED}Ошибка: titan-edge отсутствует!${NC}"
-            docker logs "$CONTAINER_ID"
-            docker rm -f "$CONTAINER_ID"
-            exit 1
-        fi
+    if [ ! -f "./titan-edge" ]; then
+        echo -e "${RED}Ошибка: titan-edge отсутствует!${NC}"
+        docker logs "$CONTAINER_ID"
+        docker rm -f "$CONTAINER_ID"
+        exit 1
     fi
 
     chmod +x ./titan-edge
@@ -176,7 +173,6 @@ EOF
     echo -e "${GREEN}[7/7] Установка завершена! Titan + ProxyChains готово к работе!${NC}"
 }
 
-
 ###############################################################################
 # (2) Генерация IP, порт, CPU/RAM/SSD
 ###############################################################################
@@ -215,8 +211,35 @@ generate_fake_mac() {
 ###############################################################################
 # (3) Создание/запуск ноды
 ###############################################################################
-echo ">>> DEBUG: Проверяем proxychains4.conf перед запуском контейнера"
-cat /etc/proxychains4.conf
+create_node() {
+    local idx="$1"
+    local proxy_host="$2"
+    local proxy_port="$3"
+    local proxy_user="$4"
+    local proxy_pass="$5"
+
+    local host_port=$((30000 + idx))
+    
+    echo -e "${ORANGE}[*] Запуск контейнера titan_node_$idx (порт $host_port)...${NC}"
+    
+    CONTAINER_ID=$(docker run -d \
+        --name "titan_node_$idx" \
+        --restart unless-stopped \
+        -p "${host_port}:1234/udp" \
+        -e ALL_PROXY="socks5://${proxy_user}:${proxy_pass}@${proxy_host}:${proxy_port}" \
+        mytitan/proxy-titan-edge-custom)
+
+    if [ -z "$CONTAINER_ID" ]; then
+        echo -e "${RED}[✗] Ошибка запуска контейнера titan_node_$idx${NC}"
+        return 1
+    fi
+
+    echo -e "${GREEN}[✓] Контейнер titan_node_$idx запущен! ID: $CONTAINER_ID${NC}"
+}
+
+###############################################################################
+# (4) Настройка нод
+###############################################################################
 create_node() {
     local idx="$1"
     local identity_code="$2"
@@ -225,148 +248,71 @@ create_node() {
     local proxy_user="$5"
     local proxy_pass="$6"
 
-    IFS=',' read -r cpu_val ram_val ssd_val <<< "$(generate_spoofer_profile)"
-    local host_port=$(generate_random_port)
-    local node_ip=$(generate_country_ip)
-    local mac=$(generate_fake_mac)
-
-    local cpu_period=100000
-    local cpu_quota=$((cpu_val * cpu_period))
-
-    local volume="titan_data_$idx"
-    docker rm -f "titan_node_$idx" 2>/dev/null
-    docker volume create "$volume" >/dev/null
-
-    echo -e "${ORANGE}[*] Настраиваем proxychains4.conf для ноды $idx...${NC}"
-    cat > /etc/proxychains4.conf <<EOF
-strict_chain
-proxy_dns
-tcp_read_time_out 15000
-tcp_connect_time_out 8000
-
-[ProxyList]
-socks5 $proxy_host $proxy_port $proxy_user $proxy_pass
-EOF
-
-    echo -e "${ORANGE}[*] Запуск titan_node_$idx (CPU=$cpu_val, RAM=${ram_val}G), порт=$host_port${NC}"
+    # Генерация случайных параметров
+    local host_port=$((30000 + idx))
+    local cpu_val=$((2 + RANDOM % 8))
+    local ram_val=$((8 + RANDOM % 8))
+    local ssd_val=$((256 + RANDOM % 1024))
+    
+    echo -e "${ORANGE}[*] Запуск контейнера titan_node_$idx (порт $host_port, CPU=${cpu_val}, RAM=${ram_val}GB)...${NC}"
     
     CONTAINER_ID=$(docker run -d \
         --name "titan_node_$idx" \
         --restart unless-stopped \
-        --cpu-period="$cpu_period" \
-        --cpu-quota="$cpu_quota" \
+        --cpu-quota=$((cpu_val * 100000)) \
         --memory="${ram_val}g" \
-        --memory-swap="$((ram_val * 2))g" \
-        --mac-address="$mac" \
         -p "${host_port}:1234/udp" \
-        -v "$volume:/root/.titanedge" \
         -e ALL_PROXY="socks5://${proxy_user}:${proxy_pass}@${proxy_host}:${proxy_port}" \
-        -e PRELOAD_PROXYCHAINS=1 \
-        -e PROXYCHAINS_CONF_PATH="/etc/proxychains4.conf" \
-        mytitan/proxy-titan-edge-custom \
-        bash -c "export LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libproxychains.so.4 && \
-                 mkdir -p /root/.titanedge && \
-                 proxychains4 /usr/bin/titan-edge daemon start --init --url=https://cassini-locator.titannet.io:5000/rpc/v0"
-    )
+        mytitan/proxy-titan-edge-custom)
 
     if [ -z "$CONTAINER_ID" ]; then
-        echo -e "${RED}[❌] Ошибка запуска контейнера titan_node_$idx${NC}"
+        echo -e "${RED}[✗] Ошибка запуска контейнера titan_node_$idx${NC}"
         return 1
     fi
 
-    echo -e "${GREEN}[✅] Контейнер $CONTAINER_ID успешно запущен.${NC}"
-
-    # Проверка наличия приватного ключа
-    echo -e "${ORANGE}[*] Проверка наличия приватного ключа...${NC}"
-    if ! docker exec "$CONTAINER_ID" test -f /root/.titanedge/key.json; then
-        echo -e "${RED}[❌] Приватный ключ не найден, создаем новый...${NC}"
-docker exec "$CONTAINER_ID" proxychains4 /usr/bin/titan-edge key generate
-sleep 5
-
-        if ! docker exec "$CONTAINER_ID" test -f /root/.titanedge/key.json; then
-            echo -e "${RED}[❌] Ошибка: приватный ключ не создался!${NC}"
-            return 1
-        fi
-    fi
-
-    sudo ip addr add "${node_ip}/24" dev "$NETWORK_INTERFACE" 2>/dev/null
-    sudo iptables -t nat -A PREROUTING -p udp --dport "$host_port" -j DNAT --to-destination "$node_ip:1234"
-    sudo netfilter-persistent save >/dev/null 2>&1
-
-    echo "${idx}|${identity_code}|${mac}|${host_port}|${node_ip}|$(date +%s)|${proxy_host}:${proxy_port}:${proxy_user}:${proxy_pass}|${cpu_val},${ram_val},${ssd_val}" \
-      >> "$CONFIG_FILE"
-
-    echo -e "${GREEN}[✅] Спуф IP: $node_ip -> порт $host_port${NC}"
+    echo -e "${GREEN}[✓] Контейнер titan_node_$idx запущен! ID: $CONTAINER_ID${NC}"
 }
 
-###############################################################################
-# (4) Настройка нод
-###############################################################################
 setup_nodes() {
-    local node_count
-    while true; do
+    echo -e "${ORANGE}[*] Начинаем настройку нод...${NC}"
+    
+    read -p "Сколько нод создать: " node_count
+    while [[ ! "$node_count" =~ ^[0-9]+$ || "$node_count" -le 0 ]]; do
+        echo -e "${RED}[!] Введите корректное число (> 0)!${NC}"
         read -p "Сколько нод создать: " node_count
-        [[ "$node_count" =~ ^[1-9][0-9]*$ ]] && break
-        echo -e "${RED}Введите число > 0!${NC}"
     done
 
     for ((i=1; i<=node_count; i++)); do
         local px
         while true; do
-            echo -e "${ORANGE}Укажите SOCKS5 (host:port:user:pass) для ноды $i:${NC}"
-            read -p "Прокси: " px
-            if [[ -z "$px" ]]; then
-                echo -e "${RED}Неверный формат!${NC}"
-                continue
-            fi
-            if [[ ${USED_PROXIES[$px]} ]]; then
-                echo -e "${RED}Прокси уже используется!${NC}"
-                continue
-            fi
+            read -p "Введите SOCKS5-прокси (host:port:user:pass) для ноды $i: " px
             IFS=':' read -r phost pport puser ppass <<< "$px"
             if [[ -z "$phost" || -z "$pport" || -z "$puser" || -z "$ppass" ]]; then
-                echo -e "${RED}Неверный формат!${NC}"
+                echo -e "${RED}[!] Некорректный формат! Пример: 1.2.3.4:1080:user:pass${NC}"
                 continue
             fi
-            echo -e "${GREEN}Socks5 OK: $phost:$pport${NC}"
-            USED_PROXIES[$px]=1
             break
         done
 
         local key
         while true; do
-            read -p "Identity Code (UUIDv4) для ноды $i: " key
+            read -p "Введите Identity Code (UUIDv4) для ноды $i: " key
             local upkey=${key^^}
             if [[ -z "$upkey" ]]; then
-                echo -e "${RED}Введите ключ!${NC}"
+                echo -e "${RED}[!] Identity Code не может быть пустым!${NC}"
                 continue
             fi
-            if [[ ${USED_KEYS[$upkey]} ]]; then
-                echo -e "${RED}Ключ уже используется!${NC}"
+            if [[ ! "$upkey" =~ ^[A-F0-9]{8}-[A-F0-9]{4}-4[A-F0-9]{3}-[89AB][A-F0-9]{3}-[A-F0-9]{12}$ ]]; then
+                echo -e "${RED}[!] Некорректный формат UUIDv4!${NC}"
                 continue
             fi
-            if [[ $upkey =~ ^[A-F0-9]{8}-[A-F0-9]{4}-4[A-F0-9]{3}-[89AB][A-F0-9]{3}-[A-F0-9]{12}$ ]]; then
-                USED_KEYS[$upkey]=1
-
-                # DEBUG: Лог перед вызовом create_node
-                echo ">>> DEBUG: Вызов create_node ($i, $upkey, $phost, $pport, $puser, $ppass)"
-
-                # Проверяем, существует ли функция create_node перед её вызовом
-                if declare -F create_node >/dev/null; then
-                    create_node "$i" "$upkey" "$phost" "$pport" "$puser" "$ppass"
-                else
-                    echo -e "${RED}[❌] Ошибка: Функция create_node не найдена!${NC}"
-                    exit 1
-                fi
-                break
-            else
-                echo -e "${RED}Неверный формат UUIDv4!${NC}"
-            fi
+            break
         done
+
+        create_node "$i" "$upkey" "$phost" "$pport" "$puser" "$ppass"
     done
 
-    echo -e "${GREEN}\nСоздано нод: ${node_count}${NC}"
-    read -p $'\nНажмите любую клавишу...' -n1 -s
+    echo -e "${GREEN}[✓] Настройка завершена!${NC}"
 }
 
 ###############################################################################
