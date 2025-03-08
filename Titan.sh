@@ -89,7 +89,7 @@ https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
     sudo systemctl enable --now docker
     sudo usermod -aG docker "$USER"
 
-    echo -e "${ORANGE}[6.3/7] Проверка наличия libgoworkerd.so и titan-edge...${NC}"
+echo -e "${ORANGE}[6.3/7] Проверка наличия libgoworkerd.so и titan-edge...${NC}"
 
 if [ ! -f "./libgoworkerd.so" ] || [ ! -f "./titan-edge" ]; then
     echo -e "${ORANGE}Извлекаем файлы из официального образа...${NC}"
@@ -103,7 +103,7 @@ if [ ! -f "./libgoworkerd.so" ] || [ ! -f "./titan-edge" ]; then
     docker cp titanextract:/usr/lib/libgoworkerd.so ./libgoworkerd.so
 
     echo -e "${ORANGE}[*] Поиск бинарника titan-edge внутри контейнера...${NC}"
-    BINARY_PATH=$(docker exec titanextract find / -type f -name "titan-edge" 2>/dev/null | grep -E 'titan-edge$' | head -n1)
+    BINARY_PATH=$(docker exec titanextract find / -type f -name "titan-edge" 2>/dev/null | grep -E '/titan-edge$' | head -n1)
 
     if [ -z "$BINARY_PATH" ]; then
         echo -e "${RED}Ошибка: Не удалось найти бинарник titan-edge в контейнере!${NC}"
@@ -111,6 +111,7 @@ if [ ! -f "./libgoworkerd.so" ] || [ ! -f "./titan-edge" ]; then
         exit 1
     fi
 
+    echo -e "${GREEN}[✓] Найден бинарник: $BINARY_PATH${NC}"
     docker cp titanextract:"$BINARY_PATH" ./titan-edge
     docker rm -f titanextract
 
@@ -121,7 +122,6 @@ if [ ! -f "./libgoworkerd.so" ] || [ ! -f "./titan-edge" ]; then
 
     chmod +x ./titan-edge
 fi
-
 
     echo -e "${ORANGE}[6.5/7] Сборка кастомного Docker-образа...${NC}"
     
