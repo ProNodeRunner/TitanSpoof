@@ -322,6 +322,10 @@ setup_nodes() {
             fi
             if [[ $upkey =~ ^[A-F0-9]{8}-[A-F0-9]{4}-4[A-F0-9]{3}-[89AB][A-F0-9]{3}-[A-F0-9]{12}$ ]]; then
                 USED_KEYS[$upkey]=1
+
+                # 🛠 Добавлен лог перед вызовом create_node
+                echo -e "${ORANGE}[*] Вызов create_node для ноды $i...${NC}"
+
                 create_node "$i" "$upkey" "$phost" "$pport" "$puser" "$ppass"
                 break
             else
