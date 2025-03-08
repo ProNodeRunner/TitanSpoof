@@ -68,14 +68,23 @@ install_dependencies() {
 
     echo -e "${ORANGE}[2.5/7] Настройка proxychains4...${NC}"
     echo -e "${ORANGE}[*] Введите SOCKS5-прокси для установки (формат: host:port:user:pass):${NC}"
+
     while true; do
         read -p "Прокси для установки: " PROXY_INPUT
         IFS=':' read -r PROXY_HOST PROXY_PORT PROXY_USER PROXY_PASS <<< "$PROXY_INPUT"
+
         if [[ -z "$PROXY_HOST" || -z "$PROXY_PORT" || -z "$PROXY_USER" || -z "$PROXY_PASS" ]]; then
             echo -e "${RED}[!] Некорректный формат! Пример: 1.2.3.4:1080:user:pass${NC}"
             continue
         fi
-        break
+
+        # Проверка доступности прокси
+        if curl --proxy "socks5://${PROXY_USER}:${PROXY_PASS}@${PROXY_HOST}:${PROXY_PORT}" -s --connect-timeout 5 https://api.ipify.org >/dev/null; then
+            echo -e "${GREEN}[✓] Прокси успешно подключен!${NC}"
+            break
+        else
+            echo -e "${RED}[✗] Прокси не работает! Попробуйте другой.${NC}"
+        fi
     done
 
     sudo bash -c "cat > /etc/proxychains4.conf <<EOL
