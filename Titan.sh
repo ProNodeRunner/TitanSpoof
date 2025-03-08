@@ -230,6 +230,7 @@ create_node() {
         -e PROXYCHAINS_CONF_PATH="/etc/proxychains4.conf" \
         mytitan/proxy-titan-edge-custom \
         bash -c "export LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libproxychains.so.4 && \
+                 mkdir -p /root/.titanedge && \
                  proxychains4 /usr/bin/titan-edge daemon start --init --url=https://cassini-locator.titannet.io:5000/rpc/v0"
     then
         echo -e "${RED}[❌] Ошибка запуска контейнера titan_node_$idx${NC}"
@@ -295,7 +296,6 @@ create_node() {
         echo -e "${RED}[❌] Bind ошибка! Проверяем логи...${NC}"
         docker logs --tail 20 "titan_node_$idx"
     fi
-    
 }
 
 setup_nodes() {
