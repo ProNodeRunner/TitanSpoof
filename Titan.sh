@@ -1,10 +1,8 @@
 #!/bin/bash
 ################################################################################
 # TITAN BLOCKCHAIN NODE FINAL INSTALLATION SCRIPT
-# (ProxyChains + Socks5 + Titan) using:
-# - "docker pull nezha123/titan-edge" + docker cp titanextract:/usr/local/bin/titan-edge ...
-# - Then build local image “mytitan/proxy-titan-edge”
 ################################################################################
+
 LOG_FILE="/tmp/titan_install.log"
 DEBUG_LOG="/tmp/debug.log"
 
@@ -12,7 +10,7 @@ DEBUG_LOG="/tmp/debug.log"
 echo "=== Лог запуска: $(date) ===" > "$LOG_FILE"
 echo "=== Отладка запуска: $(date) ===" > "$DEBUG_LOG"
 
-# Перенаправляем STDOUT и STDERR в файл и терминал
+# Перенаправляем STDOUT и STDERR в файл и терминал (исправлено)
 exec > >(tee -a "$LOG_FILE") 2> >(tee -a "$DEBUG_LOG" >&2)
 
 log() {
@@ -34,7 +32,7 @@ declare -A USED_PORTS=()
 declare -A USED_PROXIES=()
 
 ###############################################################################
-# (A) Логотип и меню
+# (A) Логотип и меню (Исправлено)
 ###############################################################################
 show_logo() {
     local raw
@@ -46,22 +44,14 @@ show_logo() {
     fi
 }
 
-LOG_FILE="/tmp/titan_install.log"
-
 show_menu() {
-    tput setaf 3
-    show_logo
+    clear
+    if [[ -z "$LOGO_DISPLAYED" ]]; then
+        show_logo
+        LOGO_DISPLAYED=1  # Показываем логотип только 1 раз
+    fi
     echo -e "1) Установить компоненты\n2) Создать/запустить ноды\n3) Проверить статус\n4) Показать логи\n5) Перезапустить\n6) Очистка\n7) Выход"
-    tput sgr0
 }
-
-# Оборачиваем ВСЕ важные команды в логирование
-log() {
-    echo -e "$(date +'%Y-%m-%d %H:%M:%S') $1" | tee -a "$LOG_FILE"
-}
-
-# Записываем ВСЁ, что делает скрипт
-exec > >(tee -a "$LOG_FILE") 2>&1
 
 ###############################################################################
 # (1) Установка компонентов (Исправленный)
