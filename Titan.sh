@@ -255,11 +255,10 @@ tcp_connect_time_out 8000
 socks5 $PROXY_HOST $PROXY_PORT $PROXY_USER $PROXY_PASS
 EOL
 
-    echo -e "${GREEN}[✓] Proxychains4 настроен!${NC}"
-fi
+echo -e "${GREEN}[✓] Proxychains4 настроен!${NC}"
 
 # ✅ Создаём Dockerfile для кастомного контейнера
-cat <<EOF > Dockerfile
+cat > Dockerfile <<EOF
 FROM ubuntu:22.04
 COPY titan-edge /usr/bin/titan-edge
 COPY libgoworkerd.so /usr/lib/libgoworkerd.so
@@ -271,8 +270,6 @@ RUN apt-get update && apt-get install -y \
     ca-certificates \
     proxychains4 \
     && rm -rf /var/lib/apt/lists/*
-
-# Если был указан прокси, добавляем его конфиг в контейнер
 EOF
 
 if [[ "$USE_PROXY" == "y" ]]; then
