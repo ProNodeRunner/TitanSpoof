@@ -189,9 +189,7 @@ EOL
 fi
 
     echo -e "${GREEN}[✓] Proxychains4 настроен!${NC}"
-    echo -e "${ORANGE}[3/7] Настройка брандмауэра...${NC}"
-    sudo ufw allow 30000:40000/udp || true
-    sudo ufw reload || true
+    
 }
 
 
