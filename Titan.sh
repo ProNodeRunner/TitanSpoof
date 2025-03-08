@@ -75,28 +75,31 @@ install_dependencies() {
 
     while true; do
         read -p "Прокси для установки: " PROXY_INPUT
-        IFS=':' read -r PROXY_HOST PROXY_PORT PROXY_USER PROXY_PASS <<< "$PROXY_INPUT"
+        
+        # Правильное разбиение прокси-строки
+        PROXY_HOST=$(echo "$PROXY_INPUT" | cut -d':' -f1)
+        PROXY_PORT=$(echo "$PROXY_INPUT" | cut -d':' -f2)
+        PROXY_USER=$(echo "$PROXY_INPUT" | cut -d':' -f3)
+        PROXY_PASS=$(echo "$PROXY_INPUT" | cut -d':' -f4-)
 
-        # Проверяем, что переменные заданы
+        # Проверяем, что переменные не пустые
         if [[ -z "$PROXY_HOST" || -z "$PROXY_PORT" || -z "$PROXY_USER" || -z "$PROXY_PASS" ]]; then
             echo -e "${RED}[!] Некорректный формат! Пример: 1.2.3.4:1080:user:pass${NC}"
             continue
         fi
 
-        # Экспортируем переменные, чтобы их точно видел curl
-        export PROXY_HOST PROXY_PORT PROXY_USER PROXY_PASS
+        # Выводим переменные для диагностики (скрываем пароль)
+        echo -e "${ORANGE}[*] Используем прокси: socks5://${PROXY_USER}:*****@${PROXY_HOST}:${PROXY_PORT}${NC}"
 
-        echo -e "${ORANGE}[*] Проверяем работу прокси...${NC}"
-        echo -e "Используем прокси: socks5://${PROXY_USER}:*****@${PROXY_HOST}:${PROXY_PORT}"
-
-        # Проверяем соединение через curl
-        PROXY_IP=$(curl --proxy "socks5://${PROXY_USER}:${PROXY_PASS}@${PROXY_HOST}:${PROXY_PORT}" -s --connect-timeout 5 https://api.ipify.org)
+        # Проверяем соединение через curl (детальная проверка)
+        PROXY_IP=$(curl --proxy "socks5h://${PROXY_USER}:${PROXY_PASS}@${PROXY_HOST}:${PROXY_PORT}" -s --connect-timeout 5 https://api.ipify.org)
 
         if [[ -n "$PROXY_IP" ]]; then
             echo -e "${GREEN}[✓] Прокси успешно подключен! IP: $PROXY_IP${NC}"
             break
         else
-            echo -e "${RED}[✗] Прокси не работает! Попробуйте другой.${NC}"
+            echo -e "${RED}[✗] Ошибка: прокси не работает!${NC}"
+            echo -e "${RED}[*] Проверьте правильность логина, пароля или доступность прокси!${NC}"
         fi
     done
 
@@ -108,10 +111,13 @@ proxy_dns
 tcp_read_time_out 15000
 tcp_connect_time_out 8000
 [ProxyList]
-socks5 $PROXY_HOST $PROXY_PORT $PROXY_USER $PROXY_PASS
+socks5h $PROXY_HOST $PROXY_PORT $PROXY_USER $PROXY_PASS
 EOL
 
-    echo -e "${GREEN}[✓] Proxychains4 настроен!${NC}"
+    # Выводим конечный конфиг для проверки
+    echo -e "${GREEN}[✓] Proxychains4 настроен! Конфигурация:${NC}"
+    cat /etc/proxychains4.conf | sed 's/:[^:]*@/:*****@/g'  # Скрываем пароль
+
     return 0
 }
 
