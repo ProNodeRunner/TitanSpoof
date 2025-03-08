@@ -5,6 +5,17 @@
 # - "docker pull nezha123/titan-edge" + docker cp titanextract:/usr/local/bin/titan-edge ...
 # - Then build local image “mytitan/proxy-titan-edge”
 ################################################################################
+DEBUG_LOG="/tmp/debug.log"
+
+# Очищаем старые логи при запуске
+echo "=== Начало логов: $(date) ===" > "$DEBUG_LOG"
+
+# Перенаправляем вывод в лог (и оставляем его в терминале)
+exec > >(tee -a "$DEBUG_LOG") 2>&1
+
+log() {
+    echo -e "$(date +'%Y-%m-%d %H:%M:%S') $1" | tee -a "$DEBUG_LOG"
+}
 
 CONFIG_FILE="/etc/titan_nodes.conf"
 LOGO_URL="https://raw.githubusercontent.com/ProNodeRunner/Logo/main/Logo"
