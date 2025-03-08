@@ -127,35 +127,34 @@ install_dependencies() {
     sleep 1
 
     # Проверяем, уже ли настроен proxychains4
-    if [ -f "/etc/proxychains4.conf" ]; then
-        echo -e "${GREEN}[✓] Proxychains4 уже настроен. Пропускаем...${NC}"
-    else
-        echo -e "${ORANGE}[2.6/7] Настройка proxychains4...${NC}"
-        echo -e "${ORANGE}[*] Введите SOCKS5-прокси для установки (формат: host:port:user:pass):${NC}"
+if [ -f "/etc/proxychains4.conf" ]; then
+    echo -e "${GREEN}[✓] Proxychains4 уже настроен. Пропускаем...${NC}"
+else
+    echo -e "${ORANGE}[2.6/7] Настройка proxychains4...${NC}"
 
-        while true; do
-            PROXY_HOST=""
-            PROXY_PORT=""
-            PROXY_USER=""
-            PROXY_PASS=""
+    while true; do
+        echo -ne "${ORANGE}Введите SOCKS5-прокси для установки (формат: host:port:user:pass): ${NC}"
+        read PROXY_INPUT
 
-            echo -ne "${ORANGE}Введите SOCKS5-прокси для установки: ${NC}"
-            read PROXY_INPUT
+        # Если пользователь ввёл пустую строку, просим снова
+        if [[ -z "$PROXY_INPUT" ]]; then
+            echo -e "${RED}[!] Ошибка: Ввод не должен быть пустым. Попробуйте снова.${NC}"
+            continue
+        fi
 
-            echo -e "${GREEN}[*] Введённый прокси: ${PROXY_INPUT}${NC}"
+        # Разбиваем строку на переменные
+        IFS=':' read -r PROXY_HOST PROXY_PORT PROXY_USER PROXY_PASS <<< "$PROXY_INPUT"
 
-            # Разбиваем строку на переменные
-            IFS=':' read -r PROXY_HOST PROXY_PORT PROXY_USER PROXY_PASS <<< "$PROXY_INPUT"
+        # Проверяем, корректно ли переданы все 4 параметра
+        if [[ -z "$PROXY_HOST" || -z "$PROXY_PORT" || -z "$PROXY_USER" || -z "$PROXY_PASS" ]]; then
+            echo -e "${RED}[!] Ошибка: Некорректный формат! Пример: 1.2.3.4:1080:user:pass${NC}"
+            continue
+        fi
 
-            if [[ -z "$PROXY_HOST" || -z "$PROXY_PORT" || -z "$PROXY_USER" || -z "$PROXY_PASS" ]]; then
-                echo -e "${RED}[!] Некорректный формат! Пример: 1.2.3.4:1080:user:pass${NC}"
-                continue
-            fi
+        echo -e "${GREEN}[*] Проверяем прокси: socks5://${PROXY_USER}:${PROXY_PASS}@${PROXY_HOST}:${PROXY_PORT}${NC}"
 
-            echo -e "${GREEN}[*] Проверяем прокси: socks5://${PROXY_USER}:${PROXY_PASS}@${PROXY_HOST}:${PROXY_PORT}${NC}"
-
-            # Создаём конфиг proxychains4
-            cat > /etc/proxychains4.conf <<EOL
+        # Создаём конфиг proxychains4
+        cat > /etc/proxychains4.conf <<EOL
 strict_chain
 proxy_dns
 tcp_read_time_out 15000
@@ -164,29 +163,31 @@ tcp_connect_time_out 8000
 socks5 $PROXY_HOST $PROXY_PORT $PROXY_USER $PROXY_PASS
 EOL
 
-            if [ ! -f "/etc/proxychains4.conf" ]; then
-                echo -e "${RED}[!] Ошибка: proxychains4.conf не записался!${NC}"
-                continue
-            fi
-            echo -e "${GREEN}[✓] Конфигурация proxychains4 записана!${NC}"
+        # Проверяем, успешно ли записан файл
+        if [ ! -f "/etc/proxychains4.conf" ]; then
+            echo -e "${RED}[!] Ошибка: proxychains4.conf не записался!${NC}"
+            continue
+        fi
+        echo -e "${GREEN}[✓] Конфигурация proxychains4 записана!${NC}"
 
-            echo -e "${ORANGE}[*] Проверяем работоспособность proxychains4...${NC}"
-            proxychains4 -q curl -s --connect-timeout 3 https://api.ipify.org
-            if [[ $? -ne 0 ]]; then
-                echo -e "${RED}[!] Ошибка: proxychains4 не работает! Попробуйте другой прокси.${NC}"
-                continue
-            fi
+        # Проверяем работоспособность proxychains4
+        echo -e "${ORANGE}[*] Проверяем работоспособность proxychains4...${NC}"
+        proxychains4 -q curl -s --connect-timeout 3 https://api.ipify.org
+        if [[ $? -ne 0 ]]; then
+            echo -e "${RED}[!] Ошибка: proxychains4 не работает! Попробуйте другой прокси.${NC}"
+            continue
+        fi
 
-            PROXY_TEST=$(curl --proxy "socks5://${PROXY_USER}:${PROXY_PASS}@${PROXY_HOST}:${PROXY_PORT}" -s --connect-timeout 5 https://api.ipify.org)
+        PROXY_TEST=$(curl --proxy "socks5://${PROXY_USER}:${PROXY_PASS}@${PROXY_HOST}:${PROXY_PORT}" -s --connect-timeout 5 https://api.ipify.org)
 
-            if [[ -n "$PROXY_TEST" ]]; then
-                echo -e "${GREEN}[✓] Прокси успешно подключен! IP: $PROXY_TEST${NC}"
-                break
-            else
-                echo -e "${RED}[✗] Прокси не работает! Попробуйте другой прокси.${NC}"
-            fi
-        done
-    fi
+        if [[ -n "$PROXY_TEST" ]]; then
+            echo -e "${GREEN}[✓] Прокси успешно подключен! IP: $PROXY_TEST${NC}"
+            break  # Выход из цикла, если прокси рабочий
+        else
+            echo -e "${RED}[✗] Прокси не работает! Попробуйте другой прокси.${NC}"
+        fi
+    done
+fi
 
     echo -e "${GREEN}[✓] Proxychains4 настроен!${NC}"
     echo -e "${ORANGE}[3/7] Настройка брандмауэра...${NC}"
