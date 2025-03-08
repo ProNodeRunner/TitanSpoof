@@ -82,23 +82,37 @@ sudo systemctl enable docker
     echo -e "${ORANGE}[2.5/7] Настройка proxychains4...${NC}"
     echo -e "${ORANGE}[*] Введите SOCKS5-прокси для установки (формат: host:port:user:pass):${NC}"
 
-    while true; do
-        read -p "Прокси для установки: " PROXY_INPUT
-        IFS=':' read -r PROXY_HOST PROXY_PORT PROXY_USER PROXY_PASS <<< "$PROXY_INPUT"
+ while true; do
+    echo -ne "${ORANGE}Введите SOCKS5-прокси для установки (формат: host:port:user:pass): ${NC}"
+    read PROXY_INPUT
 
-        if [[ -z "$PROXY_HOST" || -z "$PROXY_PORT" || -z "$PROXY_USER" || -z "$PROXY_PASS" ]]; then
-            echo -e "${RED}[!] Некорректный формат! Пример: 1.2.3.4:1080:user:pass${NC}"
-            continue
-        fi
+    # Логируем ввод пользователя
+    echo -e "${GREEN}[*] Введённый прокси: ${PROXY_INPUT}${NC}"
 
-        # Проверка доступности прокси
-        if curl --proxy "socks5://${PROXY_USER}:${PROXY_PASS}@${PROXY_HOST}:${PROXY_PORT}" -s --connect-timeout 5 https://api.ipify.org >/dev/null; then
-            echo -e "${GREEN}[✓] Прокси успешно подключен!${NC}"
-            break
-        else
-            echo -e "${RED}[✗] Прокси не работает! Попробуйте другой.${NC}"
-        fi
-    done
+    # Разбиваем строку на переменные
+    IFS=':' read -r PROXY_HOST PROXY_PORT PROXY_USER PROXY_PASS <<< "$PROXY_INPUT"
+
+    # Проверяем, что все переменные заполнены
+    if [[ -z "$PROXY_HOST" || -z "$PROXY_PORT" || -z "$PROXY_USER" || -z "$PROXY_PASS" ]]; then
+        echo -e "${RED}[!] Некорректный формат! Пример: 1.2.3.4:1080:user:pass${NC}"
+        continue
+    fi
+
+    # Логируем разбор прокси
+    echo -e "${GREEN}[*] Проверяем прокси: socks5://${PROXY_USER}:${PROXY_PASS}@${PROXY_HOST}:${PROXY_PORT}${NC}"
+
+    # Тестируем соединение через прокси и логируем вывод
+    PROXY_TEST=$(curl --proxy "socks5://${PROXY_USER}:${PROXY_PASS}@${PROXY_HOST}:${PROXY_PORT}" -s --connect-timeout 5 https://api.ipify.org)
+
+    if [[ -n "$PROXY_TEST" ]]; then
+        echo -e "${GREEN}[✓] Прокси успешно подключен! IP: $PROXY_TEST${NC}"
+        break
+    else
+        echo -e "${RED}[✗] Прокси не работает! Полный вывод ошибки:${NC}"
+        curl --proxy "socks5://${PROXY_USER}:${PROXY_PASS}@${PROXY_HOST}:${PROXY_PORT}" -v --connect-timeout 5 https://api.ipify.org
+        echo -e "${RED}[!] Попробуйте ввести другой прокси.${NC}"
+    fi
+done
 
     cat > /etc/proxychains4.conf <<EOL
 strict_chain
