@@ -214,7 +214,7 @@ create_node() {
     docker rm -f "titan_node_$idx" 2>/dev/null
     docker volume create "$volume" >/dev/null
 
-    echo -e "${ORANGE}Запуск titan_node_$idx (CPU=$cpu_val, RAM=${ram_val}G), порт=$host_port${NC}"
+    echo -e "${ORANGE}[*] Запуск titan_node_$idx (CPU=$cpu_val, RAM=${ram_val}G), порт=$host_port${NC}"
     if ! docker run -d \
         --name "titan_node_$idx" \
         --restart unless-stopped \
@@ -230,11 +230,9 @@ create_node() {
         -e PROXYCHAINS_CONF_PATH="/etc/proxychains4.conf" \
         mytitan/proxy-titan-edge-custom \
         bash -c "export LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libproxychains.so.4 && \
-                 proxychains4 /usr/bin/titan-edge daemon start --init --url=https://cassini-locator.titannet.io:5000/rpc/v0 && \
-                 sleep 5 && \
-                 proxychains4 /usr/bin/titan-edge keygen"
+                 proxychains4 /usr/bin/titan-edge daemon start --init --url=https://cassini-locator.titannet.io:5000/rpc/v0"
     then
-        echo -e "${RED}[✗] Ошибка запуска контейнера titan_node_$idx${NC}"
+        echo -e "${RED}[❌] Ошибка запуска контейнера titan_node_$idx${NC}"
         return 1
     fi
 
@@ -245,17 +243,17 @@ create_node() {
     echo "${idx}|${identity_code}|${mac}|${host_port}|${node_ip}|$(date +%s)|${proxy_host}:${proxy_port}:${proxy_user}:${proxy_pass}|${cpu_val},${ram_val},${ssd_val}" \
       >> "$CONFIG_FILE"
 
-    echo -e "${ORANGE}Спуф IP: $node_ip -> порт $host_port${NC}"
+    echo -e "${GREEN}[✅] Спуф IP: $node_ip -> порт $host_port${NC}"
     echo -e "${ORANGE}[*] Ожидание запуска контейнера titan_node_$idx...${NC}"
-    
+
     timeout=60
     while [ $timeout -gt 0 ]; do
         state=$(docker inspect --format='{{.State.Status}}' "titan_node_$idx" 2>/dev/null)
         if [[ "$state" == "running" ]]; then
-            echo -e "${GREEN}[*] Контейнер titan_node_$idx успешно запущен.${NC}"
+            echo -e "${GREEN}[✅] Контейнер titan_node_$idx успешно запущен.${NC}"
             break
         elif [[ "$state" == "exited" || "$state" == "dead" ]]; then
-            echo -e "${RED}[✗] Ошибка! Контейнер завершился неожиданно.${NC}"
+            echo -e "${RED}[❌] Ошибка! Контейнер завершился неожиданно.${NC}"
             docker logs "titan_node_$idx"
             return 1
         fi
@@ -264,14 +262,14 @@ create_node() {
     done
 
     if [ $timeout -le 0 ]; then
-        echo -e "${RED}[✗] Таймаут ожидания запуска контейнера.${NC}"
+        echo -e "${RED}[❌] Таймаут ожидания запуска контейнера.${NC}"
         return 1
     fi
 
     echo -e "${ORANGE}[*] Проверка наличия приватного ключа...${NC}"
     if ! docker exec -it "titan_node_$idx" bash -c "test -f /root/.titanedge/key.json"; then
-        echo -e "${RED}[✗] Приватный ключ не найден, создаем новый...${NC}"
-        docker exec -it "titan_node_$idx" bash -c "proxychains4 /usr/bin/titan-edge keygen"
+        echo -e "${RED}[❌] Приватный ключ не найден, создаем новый...${NC}"
+        docker exec -it "titan_node_$idx" bash -c "proxychains4 /usr/bin/titan-edge setup"
         sleep 5
     fi
 
@@ -279,18 +277,19 @@ create_node() {
     bind_output=$(docker exec -it "titan_node_$idx" bash -c "proxychains4 /usr/bin/titan-edge bind --hash=$identity_code https://api-test1.container1.titannet.io/api/v2/device/binding" 2>&1)
 
     if echo "$bind_output" | grep -iq "Registrations exceeded the number"; then
-        echo -e "${RED}[✗] Ошибка: превышено количество регистраций!${NC}"
+        echo -e "${RED}[❌] Ошибка: превышено количество регистраций!${NC}"
         echo -e "${RED}Нода уже зарегистрирована? Попробуйте другой ключ или проверьте активные ноды.${NC}"
         docker logs --tail 20 "titan_node_$idx"
     elif echo "$bind_output" | grep -iq "private key not exist"; then
-        echo -e "${RED}[✗] Ошибка: приватный ключ не найден. Перезапустите ноду.${NC}"
+        echo -e "${RED}[❌] Ошибка: приватный ключ не найден. Перезапустите ноду.${NC}"
         docker logs --tail 20 "titan_node_$idx"
     elif echo "$bind_output" | grep -iq "Edge registered successfully"; then
-        echo -e "${GREEN}[✓] Bind OK для ноды $idx${NC}"
+        echo -e "${GREEN}[✅] Bind OK для ноды $idx${NC}"
     else
-        echo -e "${RED}[✗] Bind ошибка! Проверяем логи...${NC}"
+        echo -e "${RED}[❌] Bind ошибка! Проверяем логи...${NC}"
         docker logs --tail 20 "titan_node_$idx"
     fi
+    
 }
 
 setup_nodes() {
