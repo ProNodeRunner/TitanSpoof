@@ -79,11 +79,17 @@ sudo systemctl enable docker
 
     sudo sed -i 's/#\$nrconf{restart} = "i"/\$nrconf{restart} = "a"/' /etc/needrestart/needrestart.conf
 
-    echo -e "${ORANGE}[2.5/7] Настройка proxychains4...${NC}"
-    echo -e "${ORANGE}[*] Введите SOCKS5-прокси для установки (формат: host:port:user:pass):${NC}"
+echo -e "${ORANGE}[2.5/7] Настройка proxychains4...${NC}"
+echo -e "${ORANGE}[*] Введите SOCKS5-прокси для установки (формат: host:port:user:pass):${NC}"
 
- while true; do
-    echo -ne "${ORANGE}Введите SOCKS5-прокси для установки (формат: host:port:user:pass): ${NC}"
+while true; do
+    # Обнуляем переменные перед каждой попыткой
+    PROXY_HOST=""
+    PROXY_PORT=""
+    PROXY_USER=""
+    PROXY_PASS=""
+
+    echo -ne "${ORANGE}Введите SOCKS5-прокси для установки: ${NC}"
     read PROXY_INPUT
 
     # Логируем ввод пользователя
@@ -101,7 +107,32 @@ sudo systemctl enable docker
     # Логируем разбор прокси
     echo -e "${GREEN}[*] Проверяем прокси: socks5://${PROXY_USER}:${PROXY_PASS}@${PROXY_HOST}:${PROXY_PORT}${NC}"
 
-    # Тестируем соединение через прокси и логируем вывод
+    # Создаём конфиг proxychains4
+    cat > /etc/proxychains4.conf <<EOL
+strict_chain
+proxy_dns
+tcp_read_time_out 15000
+tcp_connect_time_out 8000
+[ProxyList]
+socks5 $PROXY_HOST $PROXY_PORT $PROXY_USER $PROXY_PASS
+EOL
+
+    # Проверяем, записался ли конфиг proxychains4
+    if [ ! -f "/etc/proxychains4.conf" ]; then
+        echo -e "${RED}[!] Ошибка: proxychains4.conf не записался!${NC}"
+        continue
+    fi
+    echo -e "${GREEN}[✓] Конфигурация proxychains4 записана!${NC}"
+
+    # Проверяем, работает ли proxychains4 перед тестом прокси
+    echo -e "${ORANGE}[*] Тестируем `proxychains4` перед проверкой прокси...${NC}"
+    proxychains4 -q curl -s --connect-timeout 3 https://api.ipify.org
+    if [[ $? -ne 0 ]]; then
+        echo -e "${RED}[!] Ошибка: proxychains4 не работает, попробуйте другой прокси!${NC}"
+        continue
+    fi
+
+    # Тестируем соединение через прокси
     PROXY_TEST=$(curl --proxy "socks5://${PROXY_USER}:${PROXY_PASS}@${PROXY_HOST}:${PROXY_PORT}" -s --connect-timeout 5 https://api.ipify.org)
 
     if [[ -n "$PROXY_TEST" ]]; then
@@ -114,16 +145,8 @@ sudo systemctl enable docker
     fi
 done
 
-    cat > /etc/proxychains4.conf <<EOL
-strict_chain
-proxy_dns
-tcp_read_time_out 15000
-tcp_connect_time_out 8000
-[ProxyList]
-socks5 $PROXY_HOST $PROXY_PORT $PROXY_USER $PROXY_PASS
-EOL
+echo -e "${GREEN}[✓] Proxychains4 настроен!${NC}"
 
-    echo -e "${GREEN}[✓] Proxychains4 настроен!${NC}"
 
     echo -e "${ORANGE}[3/7] Настройка брандмауэра...${NC}"
     sudo ufw allow 30000:40000/udp || true
@@ -167,10 +190,18 @@ generate_fake_mac() {
 # (3) Извлечение бинарников Titan
 ###############################################################################
 extract_titan_edge() {
-    docker rm -f temp_titan 2>/dev/null || true
+echo -e "${ORANGE}[*] Проверяем, работает ли proxychains4 перед скачиванием Titan...${NC}"
+proxychains4 -q curl -s --connect-timeout 5 https://api.ipify.org
+if [[ $? -ne 0 ]]; then
+    echo -e "${RED}[!] Ошибка: proxychains4 не работает, возможно, прокси недоступен.${NC}"
+    exit 1
+fi
 
-    CONTAINER_ID=$(docker create nezha123/titan-edge:latest)
-    echo -e "${GREEN}Создан временный контейнер с ID: $CONTAINER_ID${NC}"
+docker rm -f temp_titan 2>/dev/null || true
+
+CONTAINER_ID=$(docker create nezha123/titan-edge:latest)
+echo -e "${GREEN}Создан временный контейнер с ID: $CONTAINER_ID${NC}"
+
 
     docker start "$CONTAINER_ID"
     sleep 5  
@@ -227,11 +258,23 @@ setup_nodes() {
         while true; do
             read -p "Прокси для ноды $i: " PROXY_INPUT
             IFS=':' read -r PROXY_HOST PROXY_PORT PROXY_USER PROXY_PASS <<< "$PROXY_INPUT"
+
             if [[ -z "$PROXY_HOST" || -z "$PROXY_PORT" || -z "$PROXY_USER" || -z "$PROXY_PASS" ]]; then
                 echo -e "${RED}[!] Некорректный формат! Пример: 1.2.3.4:1080:user:pass${NC}"
                 continue
             fi
-            break
+
+            echo -e "${ORANGE}[*] Проверка доступности прокси...${NC}"
+            PROXY_TEST=$(curl --proxy "socks5://${PROXY_USER}:${PROXY_PASS}@${PROXY_HOST}:${PROXY_PORT}" -s --connect-timeout 5 https://api.ipify.org)
+
+            if [[ -n "$PROXY_TEST" ]]; then
+                echo -e "${GREEN}[✓] Прокси успешно подключен! IP: $PROXY_TEST${NC}"
+                break
+            else
+                echo -e "${RED}[✗] Прокси не работает!${NC}"
+                curl --proxy "socks5://${PROXY_USER}:${PROXY_PASS}@${PROXY_HOST}:${PROXY_PORT}" -v --connect-timeout 5 https://api.ipify.org
+                echo -e "${RED}[!] Попробуйте ввести другой прокси.${NC}"
+            fi
         done
 
         create_node "$i" "$PROXY_HOST" "$PROXY_PORT" "$PROXY_USER" "$PROXY_PASS"
@@ -291,10 +334,19 @@ create_node() {
 
     # ✅ Проверяем, видит ли контейнер внешний IP через прокси
     echo -e "${ORANGE}[*] Проверяем IP внутри контейнера через proxychains4...${NC}"
-    docker exec "$CONTAINER_ID" proxychains4 curl -s ifconfig.me
+    IP_CHECK=$(docker exec "$CONTAINER_ID" proxychains4 curl -s --connect-timeout 5 https://api.ipify.org)
+
+    if [[ -n "$IP_CHECK" ]]; then
+        echo -e "${GREEN}[✓] Контейнер titan_node_$idx видит IP через прокси: $IP_CHECK${NC}"
+    else
+        echo -e "${RED}[✗] Ошибка: контейнер titan_node_$idx не видит внешний IP через прокси!${NC}"
+        docker logs "$CONTAINER_ID"
+        return 1
+    fi
 
     echo -e "${GREEN}[✓] Контейнер titan_node_$idx запущен! ID: $CONTAINER_ID${NC}"
 }
+
 
 ###############################################################################
 # (6) Проверка статуса
