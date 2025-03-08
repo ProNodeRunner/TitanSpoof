@@ -249,7 +249,6 @@ EOF
     fi
 
     echo -e "${GREEN}[✅] Контейнер $CONTAINER_ID успешно запущен.${NC}"
-}
 
 echo -e "${ORANGE}[*] Проверка наличия приватного ключа...${NC}"
 if ! docker exec -it "$CONTAINER_ID" bash -c "test -f /root/.titanedge/key.json"; then
