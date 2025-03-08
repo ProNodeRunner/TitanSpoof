@@ -224,6 +224,7 @@ socks5 $proxy_host $proxy_port $proxy_user $proxy_pass
 EOF
 
     echo -e "${ORANGE}[*] Запуск titan_node_$idx (CPU=$cpu_val, RAM=${ram_val}G), порт=$host_port${NC}"
+    
     CONTAINER_ID=$(docker run -d \
         --name "titan_node_$idx" \
         --restart unless-stopped \
@@ -243,6 +244,7 @@ EOF
                  proxychains4 /usr/bin/titan-edge daemon start --init --url=https://cassini-locator.titannet.io:5000/rpc/v0"
     )
 
+    # ✅ Проверка, что контейнер действительно запустился
     if [ -z "$CONTAINER_ID" ]; then
         echo -e "${RED}[❌] Ошибка запуска контейнера titan_node_$idx${NC}"
         return 1
@@ -250,16 +252,19 @@ EOF
 
     echo -e "${GREEN}[✅] Контейнер $CONTAINER_ID успешно запущен.${NC}"
 
-echo -e "${ORANGE}[*] Проверка наличия приватного ключа...${NC}"
-if ! docker exec -it "$CONTAINER_ID" bash -c "test -f /root/.titanedge/key.json"; then
-    echo -e "${RED}[❌] Приватный ключ не найден, создаем новый...${NC}"
-    docker exec -it "$CONTAINER_ID" bash -c "proxychains4 /usr/bin/titan-edge keygen"
+    # Проверка наличия приватного ключа
+    echo -e "${ORANGE}[*] Проверка наличия приватного ключа...${NC}"
+    if ! docker exec "$CONTAINER_ID" test -f /root/.titanedge/key.json; then
+        echo -e "${RED}[❌] Приватный ключ не найден, создаем новый...${NC}"
+        docker exec "$CONTAINER_ID" proxychains4 /usr/bin/titan-edge keygen
+        sleep 5
 
-    if ! docker exec -it "$CONTAINER_ID" bash -c "test -f /root/.titanedge/key.json"; then
-        echo -e "${RED}[❌] Ошибка: приватный ключ не создался!${NC}"
-        return 1
+        # Проверка, создался ли ключ после генерации
+        if ! docker exec "$CONTAINER_ID" test -f /root/.titanedge/key.json; then
+            echo -e "${RED}[❌] Ошибка: приватный ключ не создался!${NC}"
+            return 1
+        fi
     fi
-fi
 
     sudo ip addr add "${node_ip}/24" dev "$NETWORK_INTERFACE" 2>/dev/null
     sudo iptables -t nat -A PREROUTING -p udp --dport "$host_port" -j DNAT --to-destination "$node_ip:1234"
@@ -291,36 +296,24 @@ fi
         return 1
     fi
 
-    echo -e "${ORANGE}[*] Проверка наличия приватного ключа...${NC}"
-    if ! docker exec -it "titan_node_$idx" bash -c "test -f /root/.titanedge/key.json"; then
-        echo -e "${RED}[❌] Приватный ключ не найден, создаем новый...${NC}"
-        docker exec -it "titan_node_$idx" bash -c "proxychains4 /usr/bin/titan-edge keygen"
-        sleep 5
-
-        # Проверяем, появился ли ключ после генерации
-        if ! docker exec -it "titan_node_$idx" bash -c "test -f /root/.titanedge/key.json"; then
-            echo -e "${RED}[❌] Ошибка: приватный ключ не создался!${NC}"
-            return 1
-        fi
-    fi
-
     echo -e "${ORANGE}[*] Привязка ноды $idx (--hash=${identity_code})...${NC}"
-    bind_output=$(docker exec -it "titan_node_$idx" bash -c "proxychains4 /usr/bin/titan-edge bind --hash=$identity_code https://api-test1.container1.titannet.io/api/v2/device/binding" 2>&1)
+    bind_output=$(docker exec "$CONTAINER_ID" proxychains4 /usr/bin/titan-edge bind --hash=$identity_code https://api-test1.container1.titannet.io/api/v2/device/binding 2>&1)
 
     if echo "$bind_output" | grep -iq "Registrations exceeded the number"; then
         echo -e "${RED}[❌] Ошибка: превышено количество регистраций!${NC}"
         echo -e "${RED}Нода уже зарегистрирована? Попробуйте другой ключ или проверьте активные ноды.${NC}"
-        docker logs --tail 20 "titan_node_$idx"
+        docker logs --tail 20 "$CONTAINER_ID"
     elif echo "$bind_output" | grep -iq "private key not exist"; then
         echo -e "${RED}[❌] Ошибка: приватный ключ не найден. Перезапустите ноду.${NC}"
-        docker logs --tail 20 "titan_node_$idx"
+        docker logs --tail 20 "$CONTAINER_ID"
     elif echo "$bind_output" | grep -iq "Edge registered successfully"; then
         echo -e "${GREEN}[✅] Bind OK для ноды $idx${NC}"
     else
         echo -e "${RED}[❌] Bind ошибка! Проверяем логи...${NC}"
-        docker logs --tail 20 "titan_node_$idx"
+        docker logs --tail 20 "$CONTAINER_ID"
     fi
 }
+
 
 setup_nodes() {
     local node_count
