@@ -77,20 +77,31 @@ install_dependencies() {
         read -p "Прокси для установки: " PROXY_INPUT
         IFS=':' read -r PROXY_HOST PROXY_PORT PROXY_USER PROXY_PASS <<< "$PROXY_INPUT"
 
+        # Проверяем, что переменные заданы
         if [[ -z "$PROXY_HOST" || -z "$PROXY_PORT" || -z "$PROXY_USER" || -z "$PROXY_PASS" ]]; then
             echo -e "${RED}[!] Некорректный формат! Пример: 1.2.3.4:1080:user:pass${NC}"
             continue
         fi
 
-        # Проверка прокси
-        if curl --proxy "socks5://${PROXY_USER}:${PROXY_PASS}@${PROXY_HOST}:${PROXY_PORT}" -s --connect-timeout 5 https://api.ipify.org >/dev/null; then
-            echo -e "${GREEN}[✓] Прокси успешно подключен!${NC}"
+        # Экспортируем переменные, чтобы их точно видел curl
+        export PROXY_HOST PROXY_PORT PROXY_USER PROXY_PASS
+
+        echo -e "${ORANGE}[*] Проверяем работу прокси...${NC}"
+        echo -e "Используем прокси: socks5://${PROXY_USER}:*****@${PROXY_HOST}:${PROXY_PORT}"
+
+        # Проверяем соединение через curl
+        PROXY_IP=$(curl --proxy "socks5://${PROXY_USER}:${PROXY_PASS}@${PROXY_HOST}:${PROXY_PORT}" -s --connect-timeout 5 https://api.ipify.org)
+
+        if [[ -n "$PROXY_IP" ]]; then
+            echo -e "${GREEN}[✓] Прокси успешно подключен! IP: $PROXY_IP${NC}"
             break
         else
             echo -e "${RED}[✗] Прокси не работает! Попробуйте другой.${NC}"
         fi
     done
 
+    # Создаём конфиг proxychains4
+    echo -e "${ORANGE}[*] Записываем конфигурацию proxychains4...${NC}"
     cat > /etc/proxychains4.conf <<EOL
 strict_chain
 proxy_dns
@@ -103,7 +114,6 @@ EOL
     echo -e "${GREEN}[✓] Proxychains4 настроен!${NC}"
     return 0
 }
-
 
 ###############################################################################
 # (3) Проверка proxychains перед скачиванием
