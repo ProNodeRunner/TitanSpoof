@@ -1,3 +1,4 @@
+
 #!/bin/bash
 ################################################################################
 # TITAN BLOCKCHAIN NODE FINAL INSTALLATION SCRIPT
@@ -44,91 +45,207 @@ show_menu() {
 ###############################################################################
 # (1) Установка компонентов
 ###############################################################################
-echo -e "\033[0;33m[1/3] Установка компонентов и подготовка системы...\033[0m"
+install_dependencies() {
+    set -x  # Включаем режим отладки
+    echo -e "${ORANGE}[1/7] Инициализация системы...${NC}"
+    export DEBIAN_FRONTEND=noninteractive
+    export NEEDRESTART_MODE=a  
 
-export DEBIAN_FRONTEND=noninteractive
-export NEEDRESTART_MODE=a
+    sudo bash -c "echo 'iptables-persistent iptables-persistent/autosave_v4 boolean false' | debconf-set-selections"
+    sudo bash -c "echo 'iptables-persistent iptables-persistent/autosave_v6 boolean false' | debconf-set-selections"
+    echo 'debconf debconf/frontend select Noninteractive' | sudo debconf-set-selections  
 
-# Отключаем запросы на рестарт служб
-sudo bash -c "echo 'debconf debconf/frontend select Noninteractive' | debconf-set-selections"
-sudo systemctl stop unattended-upgrades
-sudo systemctl disable unattended-upgrades || true
+    sudo systemctl stop unattended-upgrades
+    sudo systemctl disable unattended-upgrades || true
 
-# Обновление системы и установка зависимостей
-sudo apt-get update -yq && sudo apt-get upgrade -yq
-sudo apt-get install -yq \
-    apt-transport-https ca-certificates curl gnupg lsb-release jq \
-    screen cgroup-tools net-tools ccze netcat iptables-persistent bc \
-    ufw git build-essential proxychains4 needrestart \
-    docker.io docker-compose nano wget htop unzip iputils-ping software-properties-common
+    sudo apt-get update -yq && sudo apt-get upgrade -yq
 
-# Настройка Docker
-sudo systemctl start docker
-sudo systemctl enable docker
-sudo usermod -aG docker $USER
+    echo -e "${ORANGE}[2/7] Установка пакетов и Docker...${NC}"
+    sudo apt-get install -yq \
+        apt-transport-https ca-certificates curl gnupg lsb-release jq \
+        screen cgroup-tools net-tools ccze netcat iptables-persistent bc \
+        ufw git build-essential proxychains4 needrestart
 
-echo -e "\033[0;32m[✓] Система подготовлена и компоненты установлены!\033[0m"
+    # Проверяем, установлен ли curl
+    if ! command -v curl &>/dev/null; then
+        echo -e "${RED}[!] curl не установлен! Устанавливаем...${NC}"
+        sudo apt-get install -yq curl
+    fi
 
-###############################################################################
-# (2) Извлечение Titan Edge из контейнера
-###############################################################################
-echo -e "\033[0;33m[2/3] Извлечение Titan Edge из контейнера...\033[0m"
+    # Добавляем репозиторий Docker
+    echo -e "${ORANGE}[2.1/7] Добавляем репозиторий Docker...${NC}"
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo tee /usr/share/keyrings/docker-archive-keyring.gpg > /dev/null
+    echo "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
 
-# Создаём временный контейнер для извлечения файлов
-CONTAINER_ID=$(docker create nezha123/titan-edge)
-echo -e "\033[0;32m[*] Создан временный контейнер с ID: $CONTAINER_ID\033[0m"
+    echo -e "${ORANGE}[2.2/7] Обновление списка пакетов для Docker...${NC}"
+    sudo apt-get update -yq
 
-# Извлекаем файлы
-docker cp "$CONTAINER_ID":/usr/bin/titan-edge ./titan-edge || \
-docker cp "$CONTAINER_ID":/usr/local/bin/titan-edge ./titan-edge || \
-docker cp "$CONTAINER_ID":/opt/titan-edge ./titan-edge || \
-docker cp "$CONTAINER_ID":/root/titan-edge ./titan-edge || \
-docker cp "$CONTAINER_ID":/bin/titan-edge ./titan-edge
+    echo -e "${ORANGE}[2.3/7] Установка Docker...${NC}"
+    sudo DEBIAN_FRONTEND=noninteractive apt-get install -yq docker-ce docker-ce-cli containerd.io
 
-docker cp "$CONTAINER_ID":/usr/lib/libgoworkerd.so ./libgoworkerd.so || \
-docker cp "$CONTAINER_ID":/usr/local/lib/libgoworkerd.so ./libgoworkerd.so || \
-docker cp "$CONTAINER_ID":/opt/libgoworkerd.so ./libgoworkerd.so || \
-docker cp "$CONTAINER_ID":/root/libgoworkerd.so ./libgoworkerd.so || \
-docker cp "$CONTAINER_ID":/lib/libgoworkerd.so ./libgoworkerd.so
+    sudo systemctl start docker
+    sudo systemctl enable docker
 
-# Проверяем, что файлы успешно извлечены
-if [[ -f "titan-edge" && -f "libgoworkerd.so" ]]; then
+    # Убираем лишний вопрос о перезапуске служб
+    sudo sed -i 's/#\$nrconf{restart} = "i"/\$nrconf{restart} = "a"/' /etc/needrestart/needrestart.conf
+
+    echo -e "${GREEN}[✓] Docker установлен и работает!${NC}"
+
+    echo -e "${ORANGE}[2.5/7] Извлечение Titan Edge из контейнера...${NC}"
+    
+    # Создаём контейнер
+    CONTAINER_ID=$(docker create nezha123/titan-edge)
+    echo -e "${GREEN}[*] Создан временный контейнер с ID: ${CONTAINER_ID}${NC}"
+
+    # Копируем бинарник Titan Edge
+    docker cp "$CONTAINER_ID":/usr/bin/titan-edge ./titan-edge
+    if [[ ! -f ./titan-edge ]]; then
+        echo -e "${RED}[!] Ошибка: бинарник titan-edge не найден!${NC}"
+        exit 1
+    fi
     chmod +x ./titan-edge
-    sudo mv ./libgoworkerd.so /usr/lib/
-    sudo chmod 755 /usr/lib/libgoworkerd.so
-    sudo ldconfig
+    echo -e "${GREEN}[✓] titan-edge успешно извлечён!${NC}"
 
-    echo -e "\033[0;32m[✓] titan-edge и libgoworkerd.so успешно извлечены и зарегистрированы!\033[0m"
-else
-    echo -e "\033[0;31m[✗] Ошибка: Не удалось извлечь файлы из контейнера!\033[0m"
-    exit 1
-fi
+    # Копируем библиотеку
+    docker cp "$CONTAINER_ID":/usr/lib/libgoworkerd.so ./libgoworkerd.so
+    if [[ ! -f ./libgoworkerd.so ]]; then
+        echo -e "${RED}[!] Ошибка: библиотека libgoworkerd.so не найдена!${NC}"
+        exit 1
+    fi
 
-# Удаляем временный контейнер
-docker rm -f "$CONTAINER_ID"
+    # Перемещаем библиотеку
+    mv ./libgoworkerd.so /usr/lib/
+    chmod 755 /usr/lib/libgoworkerd.so
+    ldconfig
+    echo -e "${GREEN}[✓] libgoworkerd.so успешно извлечена и зарегистрирована!${NC}"
 
-echo -e "\033[0;32m[✓] Успешное извлечение бинарников!\033[0m"
+    # Удаляем контейнер
+    docker rm -f "$CONTAINER_ID"
+    echo -e "${GREEN}[✓] Успешное извлечение бинарника и библиотеки!${NC}"
+    
+    echo -e "${ORANGE}Переход к следующему этапу установки...${NC}"
+    sleep 1
+
+    # Проверяем, уже ли настроен proxychains4
+    if [ -f "/etc/proxychains4.conf" ]; then
+        echo -e "${GREEN}[✓] Proxychains4 уже настроен. Пропускаем...${NC}"
+    else
+        echo -e "${ORANGE}[2.6/7] Настройка proxychains4...${NC}"
+        echo -e "${ORANGE}[*] Введите SOCKS5-прокси для установки (формат: host:port:user:pass):${NC}"
+
+        while true; do
+            PROXY_HOST=""
+            PROXY_PORT=""
+            PROXY_USER=""
+            PROXY_PASS=""
+
+            echo -ne "${ORANGE}Введите SOCKS5-прокси для установки: ${NC}"
+            read PROXY_INPUT
+
+            echo -e "${GREEN}[*] Введённый прокси: ${PROXY_INPUT}${NC}"
+
+            # Разбиваем строку на переменные
+            IFS=':' read -r PROXY_HOST PROXY_PORT PROXY_USER PROXY_PASS <<< "$PROXY_INPUT"
+
+            if [[ -z "$PROXY_HOST" || -z "$PROXY_PORT" || -z "$PROXY_USER" || -z "$PROXY_PASS" ]]; then
+                echo -e "${RED}[!] Некорректный формат! Пример: 1.2.3.4:1080:user:pass${NC}"
+                continue
+            fi
+
+            echo -e "${GREEN}[*] Проверяем прокси: socks5://${PROXY_USER}:${PROXY_PASS}@${PROXY_HOST}:${PROXY_PORT}${NC}"
+
+            # Создаём конфиг proxychains4
+            cat > /etc/proxychains4.conf <<EOL
+strict_chain
+proxy_dns
+tcp_read_time_out 15000
+tcp_connect_time_out 8000
+[ProxyList]
+socks5 $PROXY_HOST $PROXY_PORT $PROXY_USER $PROXY_PASS
+EOL
+
+            if [ ! -f "/etc/proxychains4.conf" ]; then
+                echo -e "${RED}[!] Ошибка: proxychains4.conf не записался!${NC}"
+                continue
+            fi
+            echo -e "${GREEN}[✓] Конфигурация proxychains4 записана!${NC}"
+
+            echo -e "${ORANGE}[*] Проверяем работоспособность proxychains4...${NC}"
+            proxychains4 -q curl -s --connect-timeout 3 https://api.ipify.org
+            if [[ $? -ne 0 ]]; then
+                echo -e "${RED}[!] Ошибка: proxychains4 не работает! Попробуйте другой прокси.${NC}"
+                continue
+            fi
+
+            PROXY_TEST=$(curl --proxy "socks5://${PROXY_USER}:${PROXY_PASS}@${PROXY_HOST}:${PROXY_PORT}" -s --connect-timeout 5 https://api.ipify.org)
+
+            if [[ -n "$PROXY_TEST" ]]; then
+                echo -e "${GREEN}[✓] Прокси успешно подключен! IP: $PROXY_TEST${NC}"
+                break
+            else
+                echo -e "${RED}[✗] Прокси не работает! Попробуйте другой прокси.${NC}"
+            fi
+        done
+    fi
+
+    echo -e "${GREEN}[✓] Proxychains4 настроен!${NC}"
+    echo -e "${ORANGE}[3/7] Настройка брандмауэра...${NC}"
+    sudo ufw allow 30000:40000/udp || true
+    sudo ufw reload || true
+}
+
+
+###############################################################################
+# (2) Генерация IP, портов, CPU/RAM/SSD
+###############################################################################
+generate_country_ip() {
+    local first_oct=164
+    local second_oct=138
+    local third_oct=10
+    local forth_oct=$(shuf -i 2-254 -n1)
+    echo "${first_oct}.${second_oct}.${third_oct}.${forth_oct}"
+}
+
+generate_random_port() {
+    while true; do
+        local p=$(shuf -i 30000-40000 -n1)
+        if ! ss -uln | grep -q ":$p "; then
+            echo "$p"
+            return
+        fi
+    done
+}
+
+generate_spoofer_profile() {
+    local cpus=(8 10 12 14 16 18 20 22 24 26 28 30 32)
+    local c=${cpus[$RANDOM % ${#cpus[@]}]}
+    local ram=$((32 + (RANDOM % 16)*32))
+    local ssd=$((512 + (RANDOM % 20)*512))
+    echo "$c,$ram,$ssd"
+}
+
+generate_fake_mac() {
+    printf "02:%02x:%02x:%02x:%02x:%02x" $((RANDOM%256)) $((RANDOM%256)) $((RANDOM%256)) $((RANDOM%256)) $((RANDOM%256))
+}
 
 ###############################################################################
 # (3) Настройка proxychains4 и создание кастомного контейнера
 ###############################################################################
-echo -e "\033[0;33m[3/3] Настройка proxychains4 и создание кастомного контейнера...\033[0m"
+echo -e "${ORANGE}[3/7] Настройка proxychains4 и создание кастомного контейнера...${NC}"
 
-# Спрашиваем, нужно ли использовать прокси
+# Проверяем, нужно ли использовать прокси
 read -p "Хотите использовать SOCKS5-прокси? (y/n): " USE_PROXY
 if [[ "$USE_PROXY" == "y" ]]; then
-    echo -ne "\033[0;33mВведите SOCKS5-прокси (формат: host:port:user:pass): \033[0m"
+    echo -ne "${ORANGE}Введите SOCKS5-прокси (формат: host:port:user:pass): ${NC}"
     read PROXY_INPUT
-
-    # Разбираем введённый прокси
     IFS=':' read -r PROXY_HOST PROXY_PORT PROXY_USER PROXY_PASS <<< "$PROXY_INPUT"
 
     if [[ -z "$PROXY_HOST" || -z "$PROXY_PORT" ]]; then
-        echo -e "\033[0;31m[✗] Ошибка: Неправильный формат прокси!${NC}"
+        echo -e "${RED}[✗] Ошибка: Неправильный формат прокси!${NC}"
         exit 1
     fi
 
-    # Создаём конфигурационный файл proxychains4
+    # Создаём конфиг proxychains4
     cat > proxychains4.conf <<EOL
 strict_chain
 proxy_dns
@@ -138,10 +255,10 @@ tcp_connect_time_out 8000
 socks5 $PROXY_HOST $PROXY_PORT $PROXY_USER $PROXY_PASS
 EOL
 
-    echo -e "\033[0;32m[✓] Proxychains4 настроен!${NC}"
+    echo -e "${GREEN}[✓] Proxychains4 настроен!${NC}"
 fi
 
-# Создаём Dockerfile для кастомного контейнера
+# ✅ Создаём Dockerfile для кастомного контейнера
 cat <<EOF > Dockerfile
 FROM ubuntu:22.04
 COPY titan-edge /usr/bin/titan-edge
@@ -162,11 +279,9 @@ if [[ "$USE_PROXY" == "y" ]]; then
     echo "COPY proxychains4.conf /etc/proxychains4.conf" >> Dockerfile
 fi
 
-# Собираем кастомный контейнер
-docker build -t custom-titan-edge .
-
-echo -e "\033[0;32m[✓] Кастомный контейнер создан успешно! Запускаем...\033[0m"
-docker run --rm -it --name custom_titan_edge custom-titan-edge
+# ✅ Собираем кастомный контейнер
+docker build -t mytitan/proxy-titan-edge .
+echo -e "${GREEN}[✓] Кастомный контейнер собран!${NC}"
 
 ###############################################################################
 # (4) Создание/запуск ноды
@@ -217,13 +332,12 @@ create_node() {
     local proxy_user="$4"
     local proxy_pass="$5"
 
-    # Генерация случайных параметров с учетом реалистичности
-    local host_port=$((30000 + idx))
+    # Генерация случайных параметров для спуфинга (CPU, RAM, SSD)
     local cpu_options=(12 14 16 18 20 22 24 26 28 30 32 34 36 38 40 42 44 46)
     local ram_options=(32 64 96 128 160 192 224 256 320 384 448 512)
     local ssd_options=(512 1024 1536 2048 2560 3072 3584 4096)
 
-    # Выбираем случайные значения с фильтрацией
+    # Выбираем случайные значения с логическими ограничениями
     local cpu_val=${cpu_options[$RANDOM % ${#cpu_options[@]}]}
     local ram_val=32
     local ssd_val=512
@@ -238,25 +352,23 @@ create_node() {
         fi
     done
 
-    echo -e "${ORANGE}[*] Запуск контейнера titan_node_$idx (порт $host_port, CPU=${cpu_val}, RAM=${ram_val}GB, SSD=${ssd_val}GB)...${NC}"
+    echo -e "${ORANGE}[*] Запуск контейнера titan_node_$idx (порт $((30000 + idx)), CPU=${cpu_val}, RAM=${ram_val}GB, SSD=${ssd_val}GB)...${NC}"
 
+    # ✅ Запускаем контейнер с кастомным образом и спуфингом
     CONTAINER_ID=$(docker run -d \
         --name "titan_node_$idx" \
         --restart unless-stopped \
         --cpu-quota=$((cpu_val * 100000)) \
         --memory="${ram_val}g" \
-        -p "${host_port}:1234/udp" \
+        -p "$((30000 + idx)):1234/udp" \
         -v /etc/proxychains4.conf:/etc/proxychains4.conf:ro \
         -e ALL_PROXY="socks5://${proxy_user}:${proxy_pass}@${proxy_host}:${proxy_port}" \
-        mytitan/proxy-titan-edge-custom)
+        mytitan/proxy-titan-edge)
 
-    if [ -z "$CONTAINER_ID" ]; then
+    if [[ -z "$CONTAINER_ID" ]]; then
         echo -e "${RED}[✗] Ошибка запуска контейнера titan_node_$idx${NC}"
         return 1
     fi
-
-    # ✅ Копируем proxychains4.conf внутрь контейнера (если маунт не сработал)
-    docker cp /etc/proxychains4.conf "$CONTAINER_ID":/etc/proxychains4.conf
 
     # ✅ Проверяем, видит ли контейнер внешний IP через прокси
     echo -e "${ORANGE}[*] Проверяем IP внутри контейнера через proxychains4...${NC}"
