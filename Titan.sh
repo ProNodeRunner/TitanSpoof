@@ -137,33 +137,37 @@ install_dependencies() {
 
     echo -e "${GREEN}[✓] Успешное извлечение бинарника и библиотеки!${NC}"
 
-    echo -e "${ORANGE}[2.6/7] Настройка proxychains4...${NC}"
-    echo -e "${ORANGE}[*] Введите SOCKS5-прокси для установки (формат: host:port:user:pass):${NC}"
+    # Проверяем, настроен ли proxychains4
+    if [[ -f "/etc/proxychains4.conf" ]]; then
+        echo -e "${GREEN}[✓] Proxychains4 уже настроен. Пропускаем повторный ввод.${NC}"
+    else
+        echo -e "${ORANGE}[2.6/7] Настройка proxychains4...${NC}"
+        echo -e "${ORANGE}[*] Введите SOCKS5-прокси для установки (формат: host:port:user:pass):${NC}"
 
-    while true; do
-        # Обнуляем переменные перед каждой попыткой
-        PROXY_HOST=""
-        PROXY_PORT=""
-        PROXY_USER=""
-        PROXY_PASS=""
+        while true; do
+            # Обнуляем переменные перед каждой попыткой
+            PROXY_HOST=""
+            PROXY_PORT=""
+            PROXY_USER=""
+            PROXY_PASS=""
 
-        echo -ne "${ORANGE}Введите SOCKS5-прокси для установки: ${NC}"
-        read PROXY_INPUT
+            echo -ne "${ORANGE}Введите SOCKS5-прокси для установки: ${NC}"
+            read PROXY_INPUT
 
-        # Логируем ввод пользователя
-        echo -e "${GREEN}[*] Введённый прокси: ${PROXY_INPUT}${NC}"
+            # Логируем ввод пользователя
+            echo -e "${GREEN}[*] Введённый прокси: ${PROXY_INPUT}${NC}"
 
-        # Разбиваем строку на переменные
-        IFS=':' read -r PROXY_HOST PROXY_PORT PROXY_USER PROXY_PASS <<< "$PROXY_INPUT"
+            # Разбиваем строку на переменные
+            IFS=':' read -r PROXY_HOST PROXY_PORT PROXY_USER PROXY_PASS <<< "$PROXY_INPUT"
 
-        # Проверяем, что все переменные заполнены
-        if [[ -z "$PROXY_HOST" || -z "$PROXY_PORT" || -z "$PROXY_USER" || -z "$PROXY_PASS" ]]; then
-            echo -e "${RED}[!] Некорректный формат! Пример: 1.2.3.4:1080:user:pass${NC}"
-            continue
-        fi
+            # Проверяем, что все переменные заполнены
+            if [[ -z "$PROXY_HOST" || -z "$PROXY_PORT" || -z "$PROXY_USER" || -z "$PROXY_PASS" ]]; then
+                echo -e "${RED}[!] Некорректный формат! Пример: 1.2.3.4:1080:user:pass${NC}"
+                continue
+            fi
 
-        # Создаём конфиг proxychains4
-        cat > /etc/proxychains4.conf <<EOL
+            # Создаём конфиг proxychains4
+            cat > /etc/proxychains4.conf <<EOL
 strict_chain
 proxy_dns
 tcp_read_time_out 15000
@@ -172,14 +176,16 @@ tcp_connect_time_out 8000
 socks5 $PROXY_HOST $PROXY_PORT $PROXY_USER $PROXY_PASS
 EOL
 
-        echo -e "${GREEN}[✓] Proxychains4 настроен!${NC}"
-        break
-    done
+            echo -e "${GREEN}[✓] Proxychains4 настроен!${NC}"
+            break
+        done
+    fi
 
     echo -e "${ORANGE}[3/7] Настройка брандмауэра...${NC}"
     sudo ufw allow 30000:40000/udp || true
     sudo ufw reload || true
 }
+
 
 
 ###############################################################################
