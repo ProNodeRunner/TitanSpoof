@@ -5,16 +5,18 @@
 # - "docker pull nezha123/titan-edge" + docker cp titanextract:/usr/local/bin/titan-edge ...
 # - Then build local image “mytitan/proxy-titan-edge”
 ################################################################################
+LOG_FILE="/tmp/titan_install.log"
 DEBUG_LOG="/tmp/debug.log"
 
-# Очищаем старые логи при запуске
-echo "=== Начало логов: $(date) ===" > "$DEBUG_LOG"
+# Очищаем лог при запуске
+echo "=== Лог запуска: $(date) ===" > "$LOG_FILE"
+echo "=== Отладка запуска: $(date) ===" > "$DEBUG_LOG"
 
-# Перенаправляем вывод в лог (и оставляем его в терминале)
-exec > >(tee -a "$DEBUG_LOG") 2>&1
+# Перенаправляем STDOUT и STDERR в файл и терминал
+exec > >(tee -a "$LOG_FILE") 2> >(tee -a "$DEBUG_LOG" >&2)
 
 log() {
-    echo -e "$(date +'%Y-%m-%d %H:%M:%S') $1" | tee -a "$DEBUG_LOG"
+    echo -e "$(date +'%Y-%m-%d %H:%M:%S') $1" | tee -a "$LOG_FILE"
 }
 
 CONFIG_FILE="/etc/titan_nodes.conf"
