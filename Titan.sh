@@ -262,10 +262,8 @@ EOF
     echo -e "${ORANGE}[*] Проверка наличия приватного ключа...${NC}"
     if ! docker exec "$CONTAINER_ID" test -f /root/.titanedge/key.json; then
         echo -e "${RED}[❌] Приватный ключ не найден, создаем новый...${NC}"
-        docker exec "$CONTAINER_ID" proxychains4 /usr/bin/titan-edge echo ">>> DEBUG: Проверяем существование /root/.titanedge/key.json"
-docker exec "$CONTAINER_ID" ls -lah /root/.titanedge/
-keygen
-        sleep 5
+docker exec "$CONTAINER_ID" proxychains4 /usr/bin/titan-edge key generate
+sleep 5
 
         if ! docker exec "$CONTAINER_ID" test -f /root/.titanedge/key.json; then
             echo -e "${RED}[❌] Ошибка: приватный ключ не создался!${NC}"
