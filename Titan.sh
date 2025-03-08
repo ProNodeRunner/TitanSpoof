@@ -211,30 +211,28 @@ generate_fake_mac() {
 ###############################################################################
 # (3) Создание/запуск ноды
 ###############################################################################
-create_node() {
-    local idx="$1"
-    local proxy_host="$2"
-    local proxy_port="$3"
-    local proxy_user="$4"
-    local proxy_pass="$5"
+setup_nodes() {
+    echo -e "${ORANGE}[*] Укажите количество нод, которые хотите создать:${NC}"
+    while true; do
+        read -p "Сколько нод создать? (1-100): " NODE_COUNT
+        [[ "$NODE_COUNT" =~ ^[1-9][0-9]*$ ]] && break
+        echo -e "${RED}[!] Введите число больше 0!${NC}"
+    done
 
-    local host_port=$((30000 + idx))
-    
-    echo -e "${ORANGE}[*] Запуск контейнера titan_node_$idx (порт $host_port)...${NC}"
-    
-    CONTAINER_ID=$(docker run -d \
-        --name "titan_node_$idx" \
-        --restart unless-stopped \
-        -p "${host_port}:1234/udp" \
-        -e ALL_PROXY="socks5://${proxy_user}:${proxy_pass}@${proxy_host}:${proxy_port}" \
-        mytitan/proxy-titan-edge-custom)
+    for ((i=1; i<=NODE_COUNT; i++)); do
+        echo -e "${ORANGE}[*] Введите SOCKS5-прокси для ноды $i (формат: host:port:user:pass):${NC}"
+        while true; do
+            read -p "Прокси для ноды $i: " PROXY_INPUT
+            IFS=':' read -r PROXY_HOST PROXY_PORT PROXY_USER PROXY_PASS <<< "$PROXY_INPUT"
+            if [[ -z "$PROXY_HOST" || -z "$PROXY_PORT" || -z "$PROXY_USER" || -z "$PROXY_PASS" ]]; then
+                echo -e "${RED}[!] Некорректный формат! Пример: 1.2.3.4:1080:user:pass${NC}"
+                continue
+            fi
+            break
+        done
 
-    if [ -z "$CONTAINER_ID" ]; then
-        echo -e "${RED}[✗] Ошибка запуска контейнера titan_node_$idx${NC}"
-        return 1
-    fi
-
-    echo -e "${GREEN}[✓] Контейнер titan_node_$idx запущен! ID: $CONTAINER_ID${NC}"
+        create_node "$i" "$PROXY_HOST" "$PROXY_PORT" "$PROXY_USER" "$PROXY_PASS"
+    done
 }
 
 ###############################################################################
