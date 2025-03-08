@@ -47,11 +47,11 @@ show_menu() {
 install_dependencies() {
     echo -e "${ORANGE}[1/7] Инициализация системы...${NC}"
     export DEBIAN_FRONTEND=noninteractive
-    export NEEDRESTART_MODE=a  # Отключаем запросы на рестарт сервисов
+    export NEEDRESTART_MODE=a  
 
     sudo bash -c "echo 'iptables-persistent iptables-persistent/autosave_v4 boolean false' | debconf-set-selections"
     sudo bash -c "echo 'iptables-persistent iptables-persistent/autosave_v6 boolean false' | debconf-set-selections"
-    echo 'debconf debconf/frontend select Noninteractive' | sudo debconf-set-selections  # Полностью отключаем debconf
+    echo 'debconf debconf/frontend select Noninteractive' | sudo debconf-set-selections  
 
     sudo systemctl stop unattended-upgrades
     sudo systemctl disable unattended-upgrades || true
@@ -64,10 +64,8 @@ install_dependencies() {
         jq screen cgroup-tools net-tools ccze netcat iptables-persistent bc \
         ufw git build-essential proxychains4 needrestart
 
-    # Полностью отключаем needrestart
     sudo sed -i 's/#\$nrconf{restart} = "i"/\$nrconf{restart} = "a"/' /etc/needrestart/needrestart.conf
 
-    # Настраиваем proxychains4
     echo -e "${ORANGE}[2.5/7] Настройка proxychains4...${NC}"
     sudo bash -c 'cat > /etc/proxychains4.conf <<EOL
 strict_chain
@@ -99,28 +97,25 @@ https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
 
     echo -e "${ORANGE}[5/7] Извлечение libgoworkerd.so и titan-edge...${NC}"
     
-    # Удаляем старый контейнер, если он есть
     docker rm -f temp_titan 2>/dev/null || true
 
-    # Создаём временный контейнер и считываем его ID
     CONTAINER_ID=$(docker create nezha123/titan-edge:latest)
     echo -e "${GREEN}Создан временный контейнер с ID: $CONTAINER_ID${NC}"
 
     docker start "$CONTAINER_ID"
-    sleep 3
+    sleep 5  
 
     docker cp "$CONTAINER_ID":/usr/lib/libgoworkerd.so ./libgoworkerd.so || {
         echo -e "${RED}[✗] Ошибка копирования libgoworkerd.so!${NC}"
+        docker logs "$CONTAINER_ID"
         docker rm -f "$CONTAINER_ID"
         exit 1
     }
 
-    # Проверяем существование бинарника внутри контейнера перед копированием
     if docker exec "$CONTAINER_ID" test -f /usr/local/bin/titan-edge; then
         docker cp "$CONTAINER_ID":/usr/local/bin/titan-edge ./titan-edge
     else
         echo -e "${ORANGE}[*] titan-edge не найден стандартным способом! Ищем в overlay2...${NC}"
-
         CONTAINER_PATH=$(docker inspect --format='{{.GraphDriver.Data.UpperDir}}' "$CONTAINER_ID" 2>/dev/null)
         if [ -n "$CONTAINER_PATH" ]; then
             echo -e "${GREEN}Путь к контейнеру найден: $CONTAINER_PATH${NC}"
@@ -132,6 +127,7 @@ https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
 
         if [ ! -f "./titan-edge" ]; then
             echo -e "${RED}Ошибка: titan-edge отсутствует!${NC}"
+            docker logs "$CONTAINER_ID"
             docker rm -f "$CONTAINER_ID"
             exit 1
         fi
@@ -148,12 +144,10 @@ https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
 FROM ubuntu:22.04
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Копируем файлы
 COPY libgoworkerd.so /usr/lib/libgoworkerd.so
 COPY titan-edge /usr/local/bin/titan-edge
 RUN chmod +x /usr/local/bin/titan-edge && ln -s /usr/local/bin/titan-edge /usr/bin/titan-edge
 
-# Устанавливаем proxychains4 и его настройки
 RUN apt update && \
     apt install -y proxychains4 curl && \
     echo "strict_chain" > /etc/proxychains4.conf && \
@@ -162,7 +156,6 @@ RUN apt update && \
     echo "tcp_connect_time_out 8000" >> /etc/proxychains4.conf && \
     echo "[ProxyList]" >> /etc/proxychains4.conf
 
-# Переменные окружения для прокси
 ENV PROXY_HOST=""
 ENV PROXY_PORT=""
 ENV PROXY_USER=""
