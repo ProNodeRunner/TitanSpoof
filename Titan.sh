@@ -259,7 +259,9 @@ EOF
     echo -e "${ORANGE}[*] Проверка наличия приватного ключа...${NC}"
     if ! docker exec "$CONTAINER_ID" test -f /root/.titanedge/key.json; then
         echo -e "${RED}[❌] Приватный ключ не найден, создаем новый...${NC}"
-        docker exec "$CONTAINER_ID" proxychains4 /usr/bin/titan-edge keygen
+        docker exec "$CONTAINER_ID" proxychains4 /usr/bin/titan-edge echo ">>> DEBUG: Проверяем существование /root/.titanedge/key.json"
+docker exec "$CONTAINER_ID" ls -lah /root/.titanedge/
+keygen
         sleep 5
 
         if ! docker exec "$CONTAINER_ID" test -f /root/.titanedge/key.json; then
@@ -434,9 +436,6 @@ restart_nodes() {
 }
 
 cleanup() {
-echo ">>> DEBUG: Очистка системы, проверяем удаление Dockerfile.titan"
-ls -lah | grep Dockerfile.titan
-
     echo -e "${ORANGE}\n[!] ПОЛНАЯ ОЧИСТКА [!]${NC}"
 
     echo -e "${ORANGE}[1/6] Удаление контейнеров...${NC}"
@@ -445,15 +444,19 @@ ls -lah | grep Dockerfile.titan
     echo -e "${ORANGE}[2/6] Удаление томов...${NC}"
     docker volume ls -q --filter "name=titan_data" | xargs -r docker volume rm
 
-    echo -e "${ORANGE}[3/6] Удаление Docker...${NC}"
+    echo -e "${ORANGE}[3/6] Полное удаление данных Titan...${NC}"
+    sudo rm -rf /root/.titanedge
+    sudo rm -rf /var/lib/docker/volumes/titan_data_*
+
+    echo -e "${ORANGE}[4/6] Удаление Docker...${NC}"
     sudo apt-get purge -yq docker-ce docker-ce-cli containerd.io
     sudo apt-get autoremove -yq
     sudo rm -rf /var/lib/docker /etc/docker
 
-    echo -e "${ORANGE}[4/6] Очистка screen...${NC}"
+    echo -e "${ORANGE}[5/6] Очистка screen...${NC}"
     screen -ls | grep "node_" | awk -F. '{print $1}' | xargs -r -I{} screen -X -S {} quit
 
-    echo -e "${ORANGE}[5/6] Восстановление сети...${NC}"
+    echo -e "${ORANGE}[6/6] Восстановление сети...${NC}"
     while IFS='|' read -r idx code mac hport fip stamp pxy hwdata; do
         sudo ip addr del "$fip/24" dev "$NETWORK_INTERFACE" 2>/dev/null
     done < "$CONFIG_FILE"
@@ -462,9 +465,6 @@ ls -lah | grep Dockerfile.titan
 
     echo -e "${ORANGE}[+] Удаляем $CONFIG_FILE ...${NC}"
     sudo rm -f "$CONFIG_FILE"
-
-    echo -e "${ORANGE}[6/6] Очистка кэша...${NC}"
-    sudo rm -rf /tmp/fake_* ~/.titanedge /var/cache/apt/archives/*.deb
 
     echo -e "\n${GREEN}[✓] Все следы удалены! Перезагрузите сервер.${NC}"
     sleep 3
