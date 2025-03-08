@@ -325,11 +325,11 @@ setup_nodes() {
             if [[ $upkey =~ ^[A-F0-9]{8}-[A-F0-9]{4}-4[A-F0-9]{3}-[89AB][A-F0-9]{3}-[A-F0-9]{12}$ ]]; then
                 USED_KEYS[$upkey]=1
 
-                # 🛠 Добавлен лог перед вызовом create_node
-                echo -e "${ORANGE}[*] Вызов create_node для ноды $i...${NC}"
+                # DEBUG: Лог перед вызовом create_node
+                echo ">>> DEBUG: Вызов create_node ($i, $upkey, $phost, $pport, $puser, $ppass)"
 
-                # ✅ Проверяем, определена ли create_node перед вызовом
-                if declare -F create_node > /dev/null; then
+                # Проверяем, существует ли функция create_node перед её вызовом
+                if declare -F create_node >/dev/null; then
                     create_node "$i" "$upkey" "$phost" "$pport" "$puser" "$ppass"
                 else
                     echo -e "${RED}[❌] Ошибка: Функция create_node не найдена!${NC}"
