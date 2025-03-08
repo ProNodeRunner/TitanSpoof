@@ -189,6 +189,8 @@ generate_fake_mac() {
     printf "02:%02x:%02x:%02x:%02x:%02x" $((RANDOM%256)) $((RANDOM%256)) $((RANDOM%256)) $((RANDOM%256)) $((RANDOM%256))
 }
 
+#!/bin/bash
+
 ###############################################################################
 # (3) Создание/запуск ноды
 ###############################################################################
@@ -326,7 +328,13 @@ setup_nodes() {
                 # 🛠 Добавлен лог перед вызовом create_node
                 echo -e "${ORANGE}[*] Вызов create_node для ноды $i...${NC}"
 
-                create_node "$i" "$upkey" "$phost" "$pport" "$puser" "$ppass"
+                # ✅ Проверяем, определена ли create_node перед вызовом
+                if declare -F create_node > /dev/null; then
+                    create_node "$i" "$upkey" "$phost" "$pport" "$puser" "$ppass"
+                else
+                    echo -e "${RED}[❌] Ошибка: Функция create_node не найдена!${NC}"
+                    exit 1
+                fi
                 break
             else
                 echo -e "${RED}Неверный формат UUIDv4!${NC}"
