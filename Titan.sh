@@ -244,7 +244,6 @@ EOF
                  proxychains4 /usr/bin/titan-edge daemon start --init --url=https://cassini-locator.titannet.io:5000/rpc/v0"
     )
 
-    # ✅ Проверка, что контейнер действительно запустился
     if [ -z "$CONTAINER_ID" ]; then
         echo -e "${RED}[❌] Ошибка запуска контейнера titan_node_$idx${NC}"
         return 1
@@ -259,7 +258,6 @@ EOF
         docker exec "$CONTAINER_ID" proxychains4 /usr/bin/titan-edge keygen
         sleep 5
 
-        # Проверка, создался ли ключ после генерации
         if ! docker exec "$CONTAINER_ID" test -f /root/.titanedge/key.json; then
             echo -e "${RED}[❌] Ошибка: приватный ключ не создался!${NC}"
             return 1
@@ -274,47 +272,11 @@ EOF
       >> "$CONFIG_FILE"
 
     echo -e "${GREEN}[✅] Спуф IP: $node_ip -> порт $host_port${NC}"
-    echo -e "${ORANGE}[*] Ожидание запуска контейнера titan_node_$idx...${NC}"
-
-    timeout=60
-    while [ $timeout -gt 0 ]; do
-        state=$(docker inspect --format='{{.State.Status}}' "titan_node_$idx" 2>/dev/null)
-        if [[ "$state" == "running" ]]; then
-            echo -e "${GREEN}[✅] Контейнер titan_node_$idx успешно запущен.${NC}"
-            break
-        elif [[ "$state" == "exited" || "$state" == "dead" ]]; then
-            echo -e "${RED}[❌] Ошибка! Контейнер завершился неожиданно.${NC}"
-            docker logs "titan_node_$idx"
-            return 1
-        fi
-        sleep 5
-        ((timeout -= 5))
-    done
-
-    if [ $timeout -le 0 ]; then
-        echo -e "${RED}[❌] Таймаут ожидания запуска контейнера.${NC}"
-        return 1
-    fi
-
-    echo -e "${ORANGE}[*] Привязка ноды $idx (--hash=${identity_code})...${NC}"
-    bind_output=$(docker exec "$CONTAINER_ID" proxychains4 /usr/bin/titan-edge bind --hash=$identity_code https://api-test1.container1.titannet.io/api/v2/device/binding 2>&1)
-
-    if echo "$bind_output" | grep -iq "Registrations exceeded the number"; then
-        echo -e "${RED}[❌] Ошибка: превышено количество регистраций!${NC}"
-        echo -e "${RED}Нода уже зарегистрирована? Попробуйте другой ключ или проверьте активные ноды.${NC}"
-        docker logs --tail 20 "$CONTAINER_ID"
-    elif echo "$bind_output" | grep -iq "private key not exist"; then
-        echo -e "${RED}[❌] Ошибка: приватный ключ не найден. Перезапустите ноду.${NC}"
-        docker logs --tail 20 "$CONTAINER_ID"
-    elif echo "$bind_output" | grep -iq "Edge registered successfully"; then
-        echo -e "${GREEN}[✅] Bind OK для ноды $idx${NC}"
-    else
-        echo -e "${RED}[❌] Bind ошибка! Проверяем логи...${NC}"
-        docker logs --tail 20 "$CONTAINER_ID"
-    fi
 }
 
-
+###############################################################################
+# (4) Настройка нод
+###############################################################################
 setup_nodes() {
     local node_count
     while true; do
@@ -361,7 +323,7 @@ setup_nodes() {
             if [[ $upkey =~ ^[A-F0-9]{8}-[A-F0-9]{4}-4[A-F0-9]{3}-[89AB][A-F0-9]{3}-[A-F0-9]{12}$ ]]; then
                 USED_KEYS[$upkey]=1
 
-                # 🛠 Исправленный вызов create_node
+                # 🛠 Проверка перед вызовом create_node
                 if ! declare -F create_node >/dev/null; then
                     echo -e "${RED}Ошибка: Функция create_node не найдена!${NC}"
                     exit 1
@@ -380,7 +342,7 @@ setup_nodes() {
 }
 
 ###############################################################################
-# (4) Проверка статуса
+# (4.1) Проверка статуса
 ###############################################################################
 check_status() {
     clear
