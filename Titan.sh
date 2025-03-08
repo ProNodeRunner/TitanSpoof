@@ -322,13 +322,6 @@ setup_nodes() {
             fi
             if [[ $upkey =~ ^[A-F0-9]{8}-[A-F0-9]{4}-4[A-F0-9]{3}-[89AB][A-F0-9]{3}-[A-F0-9]{12}$ ]]; then
                 USED_KEYS[$upkey]=1
-
-                # 🛠 Проверка перед вызовом create_node
-                if ! declare -F create_node >/dev/null; then
-                    echo -e "${RED}Ошибка: Функция create_node не найдена!${NC}"
-                    exit 1
-                fi
-                
                 create_node "$i" "$upkey" "$phost" "$pport" "$puser" "$ppass"
                 break
             else
