@@ -54,43 +54,53 @@ install_dependencies() {
     done
 
     echo -e "${ORANGE}[2/7] Инициализация системы...${NC}"
+    
+    # Отключаем все запросы debconf
     export DEBIAN_FRONTEND=noninteractive
-    sudo apt-get update -yq && sudo apt-get upgrade -yq
+    export DEBCONF_NONINTERACTIVE_SEEN=true
 
-    echo -e "${ORANGE}[3/7] Установка пакетов...${NC}"
+    # Автоматически сохраняем iptables без вопросов
+    echo iptables-persistent iptables-persistent/autosave_v4 boolean true | sudo debconf-set-selections
+    echo iptables-persistent iptables-persistent/autosave_v6 boolean true | sudo debconf-set-selections
+
+    echo -e "${ORANGE}[3/7] Остановка автоматических обновлений...${NC}"
+    sudo systemctl stop unattended-upgrades
+    sudo systemctl disable unattended-upgrades
+
+    echo -e "${ORANGE}[4/7] Обновление и установка пакетов...${NC}"
+    sudo apt-get update -yq && sudo apt-get upgrade -yq
     sudo apt-get install -yq \
       apt-transport-https ca-certificates curl gnupg lsb-release \
       jq screen cgroup-tools net-tools ccze netcat iptables-persistent bc \
-      ufw git build-essential || { echo -e "${RED}Ошибка установки пакетов!${NC}"; exit 1; }
+      ufw git build-essential needrestart
 
-    echo -e "${ORANGE}[4/7] Настройка брандмауэра...${NC}"
-    sudo ufw allow 30000:40000/udp || true
-    sudo ufw reload || true
+    echo -e "${ORANGE}[5/7] Отключение интерактивных запросов о перезагрузке...${NC}"
+    sudo sed -i 's/#\$nrconf{restart} = "i"/\$nrconf{restart} = "a"/' /etc/needrestart/needrestart.conf
 
-    echo -e "${ORANGE}[5/7] Установка Docker...${NC}"
+    echo -e "${ORANGE}[6/7] Установка Docker...${NC}"
     
-    # Удаляем старые ключи Docker перед установкой
     sudo rm -f /usr/share/keyrings/docker-archive-keyring.gpg
     curl -fsSL https://download.docker.com/linux/ubuntu/gpg | \
         sudo gpg --batch --yes --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
-    
+
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] \
 https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
       | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
 
     sudo apt-get update -yq
-    sudo apt-get install -yq docker-ce docker-ce-cli containerd.io || { echo -e "${RED}Ошибка установки Docker!${NC}"; exit 1; }
-    sudo systemctl enable --now docker || { echo -e "${RED}Ошибка запуска Docker!${NC}"; exit 1; }
+    sudo apt-get install -yq docker-ce docker-ce-cli containerd.io
+    sudo systemctl enable --now docker
     sudo usermod -aG docker "$USER"
 
     echo -e "${ORANGE}[6/7] Проверка наличия libgoworkerd.so...${NC}"
-
     if [ ! -f "./libgoworkerd.so" ]; then
-        echo -e "${ORANGE}Извлекаем libgoworkerd.so из кастомного образа...${NC}"
-        
-        docker create --name temp_titan mytitan/proxy-titan-edge-custom
-        docker cp temp_titan:/usr/lib/libgoworkerd.so ./libgoworkerd.so
-        docker rm -f temp_titan
+        echo -e "${ORANGE}Извлекаем libgoworkerd.so из официального образа...${NC}"
+
+        docker pull nezha123/titan-edge || { echo -e "${RED}Ошибка: Не удалось скачать образ titan-edge!${NC}"; exit 1; }
+
+        docker create --name titanextract nezha123/titan-edge
+        docker cp titanextract:/usr/lib/libgoworkerd.so ./libgoworkerd.so
+        docker rm -f titanextract
 
         if [ ! -f "./libgoworkerd.so" ]; then
             echo -e "${RED}Ошибка: libgoworkerd.so не найден!${NC}"
@@ -98,72 +108,25 @@ https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
         fi
     fi
 
-echo -e "${GREEN}[✓] Установка завершена!${NC}"
-
-echo -e "${ORANGE}[6/7] Сборка Docker-образа Titan+ProxyChains...${NC}"
-
-# Создаём Dockerfile для кастомного образа
-cat > Dockerfile.titan <<EOF
-# Базовый образ
-FROM docker.io/library/ubuntu:22.04
-
-# Копируем необходимые файлы
-COPY libgoworkerd.so /usr/lib/libgoworkerd.so
-COPY titan-edge /usr/local/bin/titan-edge
-
-# Обновляем динамические библиотеки и делаем бинарник titan-edge исполняемым
-RUN ldconfig
-RUN chmod +x /usr/local/bin/titan-edge && ln -s /usr/local/bin/titan-edge /usr/bin/titan-edge
-
-# Установка необходимых пакетов и настройка proxychains4
-RUN apt update && \
-    DEBIAN_FRONTEND=noninteractive apt install -y proxychains4 curl && \
-    echo "strict_chain" > /etc/proxychains4.conf && \
-    echo "proxy_dns" >> /etc/proxychains4.conf && \
-    echo "tcp_read_time_out 15000" >> /etc/proxychains4.conf && \
-    echo "tcp_connect_time_out 8000" >> /etc/proxychains4.conf && \
-    echo "[ProxyList]" >> /etc/proxychains4.conf
-
-# Переменные окружения для прокси (будут передаваться при запуске контейнера)
-ENV PROXY_HOST=""
-ENV PROXY_PORT=""
-ENV PROXY_USER=""
-ENV PROXY_PASS=""
-ENV ALL_PROXY=""
-
-# Запуск контейнера с корректной настройкой прокси перед titan-edge
-CMD ["sh", "-c", \
-    "echo 'socks5 ${PROXY_HOST} ${PROXY_PORT} ${PROXY_USER} ${PROXY_PASS}' >> /etc/proxychains4.conf && \
-    export ALL_PROXY=socks5://${PROXY_USER}:${PROXY_PASS}@${PROXY_HOST}:${PROXY_PORT} && \
-    proxychains4 /usr/bin/titan-edge daemon start --init --url=https://cassini-locator.titannet.io:5000/rpc/v0"]
-EOF
-
-# Собираем кастомный образ
-docker build --build-arg proxy_host=1.2.3.4 --build-arg proxy_port=1080 --build-arg proxy_user=user --build-arg proxy_pass=pass -t mytitan/proxy-titan-edge-custom -f Dockerfile.titan . || {
-    echo -e "${RED}[✗] Ошибка сборки Docker-образа!${NC}"
-    exit 1
-}
-
-echo -e "${ORANGE}[6.5/7] Проверка наличия titan-edge...${NC}"
-
-# Проверяем, есть ли бинарник titan-edge, если его нет — извлекаем
-if [ ! -f "./titan-edge" ]; then
-    echo -e "${ORANGE}Извлекаем titan-edge из кастомного образа...${NC}"
-    
-    docker create --name titanextract mytitan/proxy-titan-edge-custom
-    docker cp titanextract:/usr/bin/titan-edge ./titan-edge
-    docker rm -f titanextract
-
+    echo -e "${ORANGE}[6.5/7] Проверка наличия titan-edge...${NC}"
     if [ ! -f "./titan-edge" ]; then
-        echo -e "${RED}Ошибка: Не удалось извлечь titan-edge!${NC}"
-        exit 1
-    fi
-    chmod +x ./titan-edge
-fi
+        echo -e "${ORANGE}Извлекаем titan-edge из официального образа...${NC}"
 
-echo -e "${ORANGE}[7/7] Завершение установки...${NC}"
-echo -e "${GREEN}[✓] Titan + ProxyChains готово!${NC}"
-sleep 2
+        docker pull nezha123/titan-edge || { echo -e "${RED}Ошибка: Не удалось скачать образ titan-edge!${NC}"; exit 1; }
+
+        docker create --name titanextract nezha123/titan-edge
+        docker cp titanextract:/usr/local/bin/titan-edge ./titan-edge
+        docker rm -f titanextract
+
+        if [ ! -f "./titan-edge" ]; then
+            echo -e "${RED}Ошибка: Не удалось извлечь titan-edge!${NC}"
+            exit 1
+        fi
+        chmod +x ./titan-edge
+    fi
+
+    echo -e "${ORANGE}[7/7] Завершение установки...${NC}"
+    echo -e "${GREEN}[✓] Titan + ProxyChains готово!${NC}"
 }
 
 
