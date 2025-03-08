@@ -111,13 +111,13 @@ ARG proxy_user
 ARG proxy_pass
 
 # Передаем аргументы в переменные окружения
-ENV PROXY_HOST=${proxy_host}
-ENV PROXY_PORT=${proxy_port}
-ENV PROXY_USER=${proxy_user}
-ENV PROXY_PASS=${proxy_pass}
+ENV PROXY_HOST=\${proxy_host}
+ENV PROXY_PORT=\${proxy_port}
+ENV PROXY_USER=\${proxy_user}
+ENV PROXY_PASS=\${proxy_pass}
 
 # Устанавливаем переменные окружения для прокси
-ENV ALL_PROXY="socks5://${PROXY_USER}:${PROXY_PASS}@${PROXY_HOST}:${PROXY_PORT}"
+ENV ALL_PROXY="socks5://\${PROXY_USER}:\${PROXY_PASS}@\${PROXY_HOST}:\${PROXY_PORT}"
 
 RUN apt update && \
     DEBIAN_FRONTEND=noninteractive apt install -y proxychains4 curl && \
@@ -126,11 +126,7 @@ RUN apt update && \
     echo "tcp_read_time_out 15000" >> /etc/proxychains4.conf && \
     echo "tcp_connect_time_out 8000" >> /etc/proxychains4.conf && \
     echo "[ProxyList]" >> /etc/proxychains4.conf && \
-    if [[ -z "$PROXY_HOST" || -z "$PROXY_PORT" || -z "$PROXY_USER" || -z "$PROXY_PASS" ]]; then \
-        echo "[ERROR] Прокси-переменные не заданы!"; \
-        exit 1; \
-    fi && \
-    echo "socks5 $PROXY_HOST $PROXY_PORT $PROXY_USER $PROXY_PASS" >> /etc/proxychains4.conf
+    echo "socks5 \${PROXY_HOST} \${PROXY_PORT} \${PROXY_USER} \${PROXY_PASS}" >> /etc/proxychains4.conf
 EOF
 
 # Собираем кастомный образ
@@ -236,7 +232,7 @@ if ! docker run -d \
     -e PRELOAD_PROXYCHAINS=1 \
     -e PROXYCHAINS_CONF_PATH="/etc/proxychains4.conf" \
     mytitan/proxy-titan-edge-custom \
-   bash -c "export LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libproxychains.so.4 && proxychains4 /usr/bin/titan-edge daemon start --init --url=https://cassini-locator.titannet.io:5000/rpc/v0"
+    bash -c "export LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libproxychains.so.4 && proxychains4 /usr/bin/titan-edge daemon start --init --url=https://cassini-locator.titannet.io:5000/rpc/v0"
 then
     echo -e "${RED}[✗] Ошибка запуска контейнера titan_node_$idx${NC}"
     return 1
