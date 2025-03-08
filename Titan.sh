@@ -90,24 +90,37 @@ https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
     sudo usermod -aG docker "$USER"
 
     echo -e "${ORANGE}[6/7] Проверка наличия libgoworkerd.so и titan-edge...${NC}"
-    
-    if [ ! -f "./libgoworkerd.so" ] || [ ! -f "./titan-edge" ]; then
-        echo -e "${ORANGE}Извлекаем файлы из официального образа...${NC}"
 
-        docker pull nezha123/titan-edge || { echo -e "${RED}Ошибка: Не удалось скачать образ titan-edge!${NC}"; exit 1; }
+if [ ! -f "./libgoworkerd.so" ] || [ ! -f "./titan-edge" ]; then
+    echo -e "${ORANGE}Извлекаем файлы из официального образа...${NC}"
 
-        docker create --name titanextract nezha123/titan-edge
-        docker cp titanextract:/usr/lib/libgoworkerd.so ./libgoworkerd.so
-        docker cp titanextract:/usr/local/bin/titan-edge ./titan-edge
+    docker pull nezha123/titan-edge || { 
+        echo -e "${RED}Ошибка: Не удалось скачать образ titan-edge!${NC}"; 
+        exit 1; 
+    }
+
+    docker create --name titanextract nezha123/titan-edge
+    docker cp titanextract:/usr/lib/libgoworkerd.so ./libgoworkerd.so
+
+    echo -e "${ORANGE}[*] Поиск бинарника titan-edge внутри контейнера...${NC}"
+    BINARY_PATH=$(docker exec titanextract find / -type f -name "titan-edge" 2>/dev/null | head -n1)
+
+    if [ -z "$BINARY_PATH" ]; then
+        echo -e "${RED}Ошибка: Не удалось найти бинарник titan-edge в контейнере!${NC}"
         docker rm -f titanextract
-
-        if [ ! -f "./libgoworkerd.so" ] || [ ! -f "./titan-edge" ]; then
-            echo -e "${RED}Ошибка: Не удалось извлечь файлы!${NC}"
-            exit 1
-        fi
-
-        chmod +x ./titan-edge
+        exit 1
     fi
+
+    docker cp titanextract:"$BINARY_PATH" ./titan-edge
+    docker rm -f titanextract
+
+    if [ ! -f "./libgoworkerd.so" ] || [ ! -f "./titan-edge" ]; then
+        echo -e "${RED}Ошибка: Не удалось извлечь файлы!${NC}"
+        exit 1
+    fi
+
+    chmod +x ./titan-edge
+fi
 
     echo -e "${ORANGE}[6.5/7] Сборка кастомного Docker-образа...${NC}"
     
