@@ -232,7 +232,10 @@ if ! docker run -d \
     -e PRELOAD_PROXYCHAINS=1 \
     -e PROXYCHAINS_CONF_PATH="/etc/proxychains4.conf" \
     mytitan/proxy-titan-edge-custom \
-    bash -c "export LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libproxychains.so.4 && proxychains4 /usr/bin/titan-edge daemon start --init --url=https://cassini-locator.titannet.io:5000/rpc/v0"
+    bash -c "export LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libproxychains.so.4 && \
+             proxychains4 /usr/bin/titan-edge daemon start --init --url=https://cassini-locator.titannet.io:5000/rpc/v0 && \
+             sleep 5 && \
+             proxychains4 /usr/bin/titan-edge keygen"
 then
     echo -e "${RED}[✗] Ошибка запуска контейнера titan_node_$idx${NC}"
     return 1
@@ -251,19 +254,23 @@ fi
     # Подождём 10s
     sleep 10
 
-        echo -e "${ORANGE}[*] Ожидание запуска контейнера titan_node_$idx...${NC}"
-    sleep 15  # Даем время контейнеру запуститься
+   echo -e "${ORANGE}[*] Ожидание запуска контейнера titan_node_$idx...${NC}"
+sleep 15  # Даем контейнеру запуститься
 
-    local BIND_URL="https://api-test1.container1.titannet.io/api/v2/device/binding"
-
-    if docker exec -it "titan_node_$idx" bash -c "export LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libproxychains.so.4 && proxychains4 /usr/bin/titan-edge bind --hash=$identity_code https://api-test1.container1.titannet.io/api/v2/device/binding"; then
-    echo -e "${GREEN}[✓] Bind OK для ноды $idx${NC}"
-else
-    echo -e "${RED}[✗] Bind ошибка. Возможно, ключ не создан или identity неверен${NC}"
-    echo -e "${RED}Проверяем логи контейнера...${NC}"
-    docker logs --tail 10 "titan_node_$idx"
+echo -e "${ORANGE}[*] Проверка наличия приватного ключа...${NC}"
+if ! docker exec -it "titan_node_$idx" bash -c "test -f /root/.titanedge/key.json"; then
+    echo -e "${RED}[✗] Приватный ключ не найден, создаем новый...${NC}"
+    docker exec -it "titan_node_$idx" bash -c "proxychains4 /usr/bin/titan-edge keygen"
+    sleep 5
 fi
 
+echo -e "${ORANGE}[*] Привязка ноды $idx (--hash=${identity_code})...${NC}"
+if docker exec -it "titan_node_$idx" bash -c "proxychains4 /usr/bin/titan-edge bind --hash=$identity_code https://api-test1.container1.titannet.io/api/v2/device/binding"; then
+    echo -e "${GREEN}[✓] Bind OK для ноды $idx${NC}"
+else
+    echo -e "${RED}[✗] Bind ошибка. Проверяем логи...${NC}"
+    docker logs --tail 20 "titan_node_$idx"
+fi
 
 }
 
