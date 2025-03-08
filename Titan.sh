@@ -269,8 +269,14 @@ create_node() {
     echo -e "${ORANGE}[*] Проверка наличия приватного ключа...${NC}"
     if ! docker exec -it "titan_node_$idx" bash -c "test -f /root/.titanedge/key.json"; then
         echo -e "${RED}[❌] Приватный ключ не найден, создаем новый...${NC}"
-        docker exec -it "titan_node_$idx" bash -c "proxychains4 /usr/bin/titan-edge setup"
+        docker exec -it "titan_node_$idx" bash -c "proxychains4 /usr/bin/titan-edge keygen"
         sleep 5
+
+        # Проверяем, появился ли ключ после генерации
+        if ! docker exec -it "titan_node_$idx" bash -c "test -f /root/.titanedge/key.json"; then
+            echo -e "${RED}[❌] Ошибка: приватный ключ не создался!${NC}"
+            return 1
+        fi
     fi
 
     echo -e "${ORANGE}[*] Привязка ноды $idx (--hash=${identity_code})...${NC}"
