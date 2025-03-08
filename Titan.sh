@@ -100,8 +100,13 @@ if [ ! -f "./libgoworkerd.so" ] || [ ! -f "./titan-edge" ]; then
     }
 
     docker create --name titanextract nezha123/titan-edge
+    docker start titanextract
+    sleep 3  # Ждем, пока контейнер полностью запустится
+
+    # Копируем libgoworkerd.so
     docker cp titanextract:/usr/lib/libgoworkerd.so ./libgoworkerd.so
 
+    # Поиск точного пути к titan-edge
     echo -e "${ORANGE}[*] Поиск бинарника titan-edge внутри контейнера...${NC}"
     BINARY_PATH=$(docker exec titanextract find / -type f -name "titan-edge" 2>/dev/null | grep -E '/titan-edge$' | head -n1)
 
@@ -111,7 +116,7 @@ if [ ! -f "./libgoworkerd.so" ] || [ ! -f "./titan-edge" ]; then
         exit 1
     fi
 
-    echo -e "${GREEN}[✓] Найден бинарник: $BINARY_PATH${NC}"
+    # Копируем бинарник из контейнера
     docker cp titanextract:"$BINARY_PATH" ./titan-edge
     docker rm -f titanextract
 
