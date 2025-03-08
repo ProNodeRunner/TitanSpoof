@@ -89,7 +89,7 @@ https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
     sudo systemctl enable --now docker
     sudo usermod -aG docker "$USER"
 
-    echo -e "${ORANGE}[6.5/7] Проверка наличия libgoworkerd.so и titan-edge...${NC}"
+    echo -e "${ORANGE}[6.3/7] Проверка наличия libgoworkerd.so и titan-edge...${NC}"
 
 if [ ! -f "./libgoworkerd.so" ] || [ ! -f "./titan-edge" ]; then
     echo -e "${ORANGE}Извлекаем файлы из официального образа...${NC}"
@@ -121,6 +121,7 @@ if [ ! -f "./libgoworkerd.so" ] || [ ! -f "./titan-edge" ]; then
 
     chmod +x ./titan-edge
 fi
+
 
     echo -e "${ORANGE}[6.5/7] Сборка кастомного Docker-образа...${NC}"
     
