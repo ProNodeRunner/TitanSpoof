@@ -162,6 +162,7 @@ extract_titan_edge() {
     chmod +x ./titan-edge
     docker rm -f "$CONTAINER_ID"
     echo -e "${GREEN}[✓] Titan Edge успешно извлечен!${NC}"
+}
     
 }###############################################################################
 # (5) Генерация IP, портов, CPU/RAM/SSD
@@ -201,7 +202,7 @@ generate_spoofer_profile() {
         # CPU до 16 ядер → минимум 64GB RAM
         # CPU 36+ ядер → минимум 128GB RAM
         # CPU 44+ ядер → минимум 192GB RAM
-        if ((cpu_val <= 16 && ram_val >= 64)) || ((cpu_val >= 36 && ram_val >= 128)) || ((cpu_val >= 44 && ram_val >= 192)); then
+        if ((cpu_val <= 16 && ram_val >= 64)) || ((cpu_val >= 36 && ram_val >= 128)) || ((cpu_val >= 44 и ram_val >= 192)); then
             break
         fi
     done
