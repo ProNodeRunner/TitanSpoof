@@ -127,7 +127,7 @@ RUN apt update && \
 EOF
 
 # Собираем кастомный образ
-docker build -t mytitan/proxy-titan-edge-custom -f Dockerfile.titan . || {
+docker build --build-arg proxy_host=1.2.3.4 --build-arg proxy_port=1080 --build-arg proxy_user=user --build-arg proxy_pass=pass -t mytitan/proxy-titan-edge-custom -f Dockerfile.titan . || {
     echo -e "${RED}[✗] Ошибка сборки Docker-образа!${NC}"
     exit 1
 }
