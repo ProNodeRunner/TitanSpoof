@@ -47,6 +47,8 @@ show_menu() {
 install_dependencies() {
     echo -e "${ORANGE}[1/7] Инициализация системы...${NC}"
     export DEBIAN_FRONTEND=noninteractive
+    export NEEDRESTART_MODE=a  # Отключаем запросы перезапуска сервисов
+
     sudo bash -c "echo 'iptables-persistent iptables-persistent/autosave_v4 boolean false' | debconf-set-selections"
     sudo bash -c "echo 'iptables-persistent iptables-persistent/autosave_v6 boolean false' | debconf-set-selections"
 
@@ -57,6 +59,18 @@ install_dependencies() {
         apt-transport-https ca-certificates curl gnupg lsb-release \
         jq screen cgroup-tools net-tools ccze netcat iptables-persistent bc \
         ufw git build-essential proxychains4
+
+    # Настраиваем proxychains4
+    echo -e "${ORANGE}[2.5/7] Настройка proxychains4...${NC}"
+    sudo bash -c 'cat > /etc/proxychains4.conf <<EOL
+strict_chain
+proxy_dns
+tcp_read_time_out 15000
+tcp_connect_time_out 8000
+[ProxyList]
+socks5 \$PROXY_HOST \$PROXY_PORT \$PROXY_USER \$PROXY_PASS
+EOL'
+    echo -e "${GREEN}[✓] Proxychains4 настроен!${NC}"
 
     echo -e "${ORANGE}[3/7] Настройка брандмауэра...${NC}"
     sudo ufw allow 30000:40000/udp || true
@@ -69,69 +83,74 @@ install_dependencies() {
 
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] \
 https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
-    | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
+        | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
 
     sudo apt-get update -yq
     sudo apt-get install -yq docker-ce docker-ce-cli containerd.io
     sudo systemctl enable --now docker
     sudo usermod -aG docker "$USER"
 
-    echo -e "${ORANGE}[5/7] Извлечение libgoworkerd.so...${NC}"
-    docker create --name temp_titan nezha123/titan-edge:latest
-    docker cp temp_titan:/usr/lib/libgoworkerd.so ./libgoworkerd.so
-    docker rm -f temp_titan
+    echo -e "${ORANGE}[5/7] Извлечение libgoworkerd.so и titan-edge...${NC}"
+    
+    # Удаляем старый контейнер, если он есть
+    docker rm -f temp_titan 2>/dev/null || true
 
-    if [ ! -f "./libgoworkerd.so" ]; then
-        echo -e "${RED}Ошибка: libgoworkerd.so не найден!${NC}"
-        exit 1
-    fi
-
-    echo -e "${ORANGE}[5.5/7] Извлечение бинарника titan-edge...${NC}"
+    # Создаём временный контейнер и извлекаем файлы
     docker create --name temp_titan nezha123/titan-edge:latest
-    docker cp temp_titan:/usr/local/bin/titan-edge ./titan-edge || {
-        echo -e "${RED}Ошибка: Не удалось извлечь titan-edge!${NC}"
+    docker start temp_titan
+    sleep 3
+
+    docker cp temp_titan:/usr/lib/libgoworkerd.so ./libgoworkerd.so || {
+        echo -e "${RED}[✗] Ошибка копирования libgoworkerd.so!${NC}"
         docker rm -f temp_titan
         exit 1
     }
-    docker rm -f temp_titan
-    chmod +x ./titan-edge
 
-    if [ ! -f "./titan-edge" ]; then
-        echo -e "${RED}Ошибка: titan-edge отсутствует!${NC}"
+    docker cp temp_titan:/usr/local/bin/titan-edge ./titan-edge || {
+        echo -e "${RED}[✗] Ошибка копирования titan-edge!${NC}"
+        docker rm -f temp_titan
         exit 1
-    fi
+    }
 
-    echo -e "${ORANGE}[6/7] Сборка Docker-образа Titan+ProxyChains...${NC}"
+    chmod +x ./titan-edge
+    docker rm -f temp_titan
 
-    # 🟢 Создаём Dockerfile с поддержкой proxychains4
-    cat <<EOF > Dockerfile.titan
+    echo -e "${GREEN}[✓] Библиотеки и бинарники успешно извлечены!${NC}"
+
+    echo -e "${ORANGE}[6/7] Сборка кастомного Docker-образа с proxychains4...${NC}"
+    
+    cat > Dockerfile.titan <<EOF
 FROM ubuntu:22.04
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Копируем библиотеку libgoworkerd в контейнер
+# Копируем файлы
 COPY libgoworkerd.so /usr/lib/libgoworkerd.so
-RUN ldconfig
-
-# Установка proxychains4
-RUN apt-get update -y && apt-get install -y proxychains4 libproxychains4 && rm -rf /var/lib/apt/lists/*
-
-# Копируем бинарник titan-edge
 COPY titan-edge /usr/local/bin/titan-edge
 RUN chmod +x /usr/local/bin/titan-edge && ln -s /usr/local/bin/titan-edge /usr/bin/titan-edge
 
-# Настройка proxychains4
-RUN echo -e 'strict_chain\nproxy_dns\ntcp_read_time_out 15000\ntcp_connect_time_out 8000\n[ProxyList]\nsocks5 \$PROXY_HOST \$PROXY_PORT \$PROXY_USER \$PROXY_PASS' > /etc/proxychains4.conf
+# Устанавливаем proxychains4 и его настройки
+RUN apt update && \
+    apt install -y proxychains4 curl && \
+    echo "strict_chain" > /etc/proxychains4.conf && \
+    echo "proxy_dns" >> /etc/proxychains4.conf && \
+    echo "tcp_read_time_out 15000" >> /etc/proxychains4.conf && \
+    echo "tcp_connect_time_out 8000" >> /etc/proxychains4.conf && \
+    echo "[ProxyList]" >> /etc/proxychains4.conf
 
-# Добавляем LD_PRELOAD
-ENV PRELOAD_PROXYCHAINS=1
-ENV LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libproxychains4.so
+# Переменные окружения для прокси
+ENV PROXY_HOST=""
+ENV PROXY_PORT=""
+ENV PROXY_USER=""
+ENV PROXY_PASS=""
+ENV ALL_PROXY=""
 
-# Запуск titan-edge через proxychains4
-CMD ["sh", "-c", "proxychains4 /usr/bin/titan-edge daemon start --init --url=https://cassini-locator.titannet.io:5000/rpc/v0"]
+CMD ["sh", "-c", \
+    "echo 'socks5 \${PROXY_HOST} \${PROXY_PORT} \${PROXY_USER} \${PROXY_PASS}' >> /etc/proxychains4.conf && \
+    export ALL_PROXY=socks5://\${PROXY_USER}:\${PROXY_PASS}@\${PROXY_HOST}:\${PROXY_PORT} && \
+    proxychains4 /usr/bin/titan-edge daemon start --init --url=https://cassini-locator.titannet.io:5000/rpc/v0"]
 EOF
 
-    # 🟢 Теперь собираем образ!
-    docker build --no-cache -t mytitan/proxy-titan-edge:latest -f Dockerfile.titan . || {
+    docker build -t mytitan/proxy-titan-edge-custom -f Dockerfile.titan . || {
         echo -e "${RED}[✗] Ошибка сборки Docker-образа!${NC}"
         exit 1
     }
