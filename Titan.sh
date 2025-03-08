@@ -125,8 +125,6 @@ RUN apt update && \
     echo "proxy_dns" >> /etc/proxychains4.conf && \
     echo "tcp_read_time_out 15000" >> /etc/proxychains4.conf && \
     echo "tcp_connect_time_out 8000" >> /etc/proxychains4.conf && \
-    echo "[ProxyList]" >> /etc/proxychains4.conf && \
-    echo "socks5 \${PROXY_HOST} \${PROXY_PORT} \${PROXY_USER} \${PROXY_PASS}" >> /etc/proxychains4.conf
 EOF
 
 # Собираем кастомный образ
@@ -214,32 +212,44 @@ create_node() {
     docker rm -f "titan_node_$idx" 2>/dev/null
     docker volume create "$volume" >/dev/null
 
-echo -e "${ORANGE}[*] Запуск titan_node_$idx (CPU=$cpu_val, RAM=${ram_val}G), порт=$host_port${NC}"
-CONTAINER_ID=$(docker run -d \
-    --name "titan_node_$idx" \
-    --restart unless-stopped \
-    --cpu-period="$cpu_period" \
-    --cpu-quota="$cpu_quota" \
-    --memory="${ram_val}g" \
-    --memory-swap="$((ram_val * 2))g" \
-    --mac-address="$mac" \
-    -p "${host_port}:1234/udp" \
-    -v "$volume:/root/.titanedge" \
-    -e ALL_PROXY="socks5://${proxy_user}:${proxy_pass}@${proxy_host}:${proxy_port}" \
-    -e PRELOAD_PROXYCHAINS=1 \
-    -e PROXYCHAINS_CONF_PATH="/etc/proxychains4.conf" \
-    mytitan/proxy-titan-edge-custom \
-    bash -c "export LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libproxychains.so.4 && \
-             mkdir -p /root/.titanedge && \
-             proxychains4 /usr/bin/titan-edge daemon start --init --url=https://cassini-locator.titannet.io:5000/rpc/v0"
-)
+    echo -e "${ORANGE}[*] Настраиваем proxychains4.conf для ноды $idx...${NC}"
+    cat > /etc/proxychains4.conf <<EOF
+strict_chain
+proxy_dns
+tcp_read_time_out 15000
+tcp_connect_time_out 8000
 
-if [ -z "$CONTAINER_ID" ]; then
-    echo -e "${RED}[❌] Ошибка запуска контейнера titan_node_$idx${NC}"
-    return 1
-fi
+[ProxyList]
+socks5 $proxy_host $proxy_port $proxy_user $proxy_pass
+EOF
 
-echo -e "${GREEN}[✅] Контейнер $CONTAINER_ID успешно запущен.${NC}"
+    echo -e "${ORANGE}[*] Запуск titan_node_$idx (CPU=$cpu_val, RAM=${ram_val}G), порт=$host_port${NC}"
+    CONTAINER_ID=$(docker run -d \
+        --name "titan_node_$idx" \
+        --restart unless-stopped \
+        --cpu-period="$cpu_period" \
+        --cpu-quota="$cpu_quota" \
+        --memory="${ram_val}g" \
+        --memory-swap="$((ram_val * 2))g" \
+        --mac-address="$mac" \
+        -p "${host_port}:1234/udp" \
+        -v "$volume:/root/.titanedge" \
+        -e ALL_PROXY="socks5://${proxy_user}:${proxy_pass}@${proxy_host}:${proxy_port}" \
+        -e PRELOAD_PROXYCHAINS=1 \
+        -e PROXYCHAINS_CONF_PATH="/etc/proxychains4.conf" \
+        mytitan/proxy-titan-edge-custom \
+        bash -c "export LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libproxychains.so.4 && \
+                 mkdir -p /root/.titanedge && \
+                 proxychains4 /usr/bin/titan-edge daemon start --init --url=https://cassini-locator.titannet.io:5000/rpc/v0"
+    )
+
+    if [ -z "$CONTAINER_ID" ]; then
+        echo -e "${RED}[❌] Ошибка запуска контейнера titan_node_$idx${NC}"
+        return 1
+    fi
+
+    echo -e "${GREEN}[✅] Контейнер $CONTAINER_ID успешно запущен.${NC}"
+}
 
 echo -e "${ORANGE}[*] Проверка наличия приватного ключа...${NC}"
 if ! docker exec -it "$CONTAINER_ID" bash -c "test -f /root/.titanedge/key.json"; then
