@@ -47,10 +47,11 @@ show_menu() {
 install_dependencies() {
     echo -e "${ORANGE}[1/7] Инициализация системы...${NC}"
     export DEBIAN_FRONTEND=noninteractive
-    export NEEDRESTART_MODE=a  # Отключаем запросы перезапуска сервисов
+    export NEEDRESTART_MODE=a  # Отключаем запросы на рестарт сервисов
 
     sudo bash -c "echo 'iptables-persistent iptables-persistent/autosave_v4 boolean false' | debconf-set-selections"
     sudo bash -c "echo 'iptables-persistent iptables-persistent/autosave_v6 boolean false' | debconf-set-selections"
+    echo 'debconf debconf/frontend select Noninteractive' | sudo debconf-set-selections  # Полностью отключаем debconf
 
     sudo apt-get update -yq && sudo apt-get upgrade -yq
 
@@ -58,7 +59,10 @@ install_dependencies() {
     sudo apt-get install -yq \
         apt-transport-https ca-certificates curl gnupg lsb-release \
         jq screen cgroup-tools net-tools ccze netcat iptables-persistent bc \
-        ufw git build-essential proxychains4
+        ufw git build-essential proxychains4 needrestart
+
+    # Полностью отключаем needrestart
+    sudo sed -i 's/#\$nrconf{restart} = "i"/\$nrconf{restart} = "a"/' /etc/needrestart/needrestart.conf
 
     # Настраиваем proxychains4
     echo -e "${ORANGE}[2.5/7] Настройка proxychains4...${NC}"
@@ -95,25 +99,41 @@ https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
     # Удаляем старый контейнер, если он есть
     docker rm -f temp_titan 2>/dev/null || true
 
-    # Создаём временный контейнер и извлекаем файлы
-    docker create --name temp_titan nezha123/titan-edge:latest
-    docker start temp_titan
+    # Создаём временный контейнер и считываем его ID
+    CONTAINER_ID=$(docker create nezha123/titan-edge:latest)
+    echo -e "${GREEN}Создан временный контейнер с ID: $CONTAINER_ID${NC}"
+
+    docker start "$CONTAINER_ID"
     sleep 3
 
-    docker cp temp_titan:/usr/lib/libgoworkerd.so ./libgoworkerd.so || {
+    docker cp "$CONTAINER_ID":/usr/lib/libgoworkerd.so ./libgoworkerd.so || {
         echo -e "${RED}[✗] Ошибка копирования libgoworkerd.so!${NC}"
-        docker rm -f temp_titan
+        docker rm -f "$CONTAINER_ID"
         exit 1
     }
 
-    docker cp temp_titan:/usr/local/bin/titan-edge ./titan-edge || {
+    docker cp "$CONTAINER_ID":/usr/local/bin/titan-edge ./titan-edge || {
         echo -e "${RED}[✗] Ошибка копирования titan-edge!${NC}"
-        docker rm -f temp_titan
-        exit 1
+        echo -e "${ORANGE}Пробуем найти titan-edge вручную...${NC}"
+
+        CONTAINER_PATH=$(docker inspect --format='{{.GraphDriver.Data.UpperDir}}' "$CONTAINER_ID" 2>/dev/null)
+        if [ -n "$CONTAINER_PATH" ]; then
+            echo -e "${GREEN}Путь к контейнеру найден: $CONTAINER_PATH${NC}"
+            if [ -f "$CONTAINER_PATH/usr/bin/titan-edge" ]; then
+                echo -e "${GREEN}Копируем бинарник из overlay2!${NC}"
+                cp "$CONTAINER_PATH/usr/bin/titan-edge" ./titan-edge
+            fi
+        fi
+
+        if [ ! -f "./titan-edge" ]; then
+            echo -e "${RED}Ошибка: titan-edge отсутствует!${NC}"
+            docker rm -f "$CONTAINER_ID"
+            exit 1
+        fi
     }
 
     chmod +x ./titan-edge
-    docker rm -f temp_titan
+    docker rm -f "$CONTAINER_ID"
 
     echo -e "${GREEN}[✓] Библиотеки и бинарники успешно извлечены!${NC}"
 
