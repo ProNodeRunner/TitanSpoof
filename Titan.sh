@@ -112,10 +112,24 @@ https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
     if [ ! -f "./titan-edge" ]; then
         echo -e "${ORANGE}Извлекаем titan-edge из официального образа...${NC}"
 
-        docker pull nezha123/titan-edge || { echo -e "${RED}Ошибка: Не удалось скачать образ titan-edge!${NC}"; exit 1; }
-
         docker create --name titanextract nezha123/titan-edge
-        docker cp titanextract:/usr/local/bin/titan-edge ./titan-edge
+        docker start titanextract
+        sleep 3
+
+        # Проверяем путь к бинарнику titan-edge
+        echo -e "${ORANGE}[*] Поиск бинарника titan-edge внутри контейнера...${NC}"
+        docker exec titanextract find / -name "titan-edge" 2>/dev/null
+
+        # Если бинарник найден в другом месте, меняем путь
+        BINARY_PATH=$(docker exec titanextract find / -name "titan-edge" 2>/dev/null | head -n1)
+        
+        if [ -z "$BINARY_PATH" ]; then
+            echo -e "${RED}Ошибка: Не удалось найти бинарник titan-edge!${NC}"
+            docker rm -f titanextract
+            exit 1
+        fi
+
+        docker cp titanextract:"$BINARY_PATH" ./titan-edge
         docker rm -f titanextract
 
         if [ ! -f "./titan-edge" ]; then
@@ -128,7 +142,6 @@ https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
     echo -e "${ORANGE}[7/7] Завершение установки...${NC}"
     echo -e "${GREEN}[✓] Titan + ProxyChains готово!${NC}"
 }
-
 
 ###############################################################################
 # (2) Генерация IP, порт, CPU/RAM/SSD
