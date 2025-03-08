@@ -65,13 +65,13 @@ install_dependencies() {
         screen cgroup-tools net-tools ccze netcat iptables-persistent bc \
         ufw git build-essential proxychains4 needrestart
 
-    # Проверяем, установлен ли curl (он ломает проверку прокси, если отсутствует)
+    # Проверяем, установлен ли curl
     if ! command -v curl &>/dev/null; then
         echo -e "${RED}[!] curl не установлен! Устанавливаем...${NC}"
         sudo apt-get install -yq curl
     fi
 
-    # Добавляем репозиторий Docker без запросов подтверждения
+    # Добавляем репозиторий Docker
     echo -e "${ORANGE}[2.1/7] Добавляем репозиторий Docker...${NC}"
     curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo tee /usr/share/keyrings/docker-archive-keyring.gpg > /dev/null
     echo "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
@@ -79,10 +79,9 @@ install_dependencies() {
     echo -e "${ORANGE}[2.2/7] Обновление списка пакетов для Docker...${NC}"
     sudo apt-get update -yq
 
-    echo -e "${ORANGE}[2.3/7] Установка Docker без запросов подтверждения...${NC}"
+    echo -e "${ORANGE}[2.3/7] Установка Docker...${NC}"
     sudo DEBIAN_FRONTEND=noninteractive apt-get install -yq docker-ce docker-ce-cli containerd.io
 
-    # Запускаем и добавляем Docker в автозапуск
     sudo systemctl start docker
     sudo systemctl enable docker
 
@@ -93,59 +92,47 @@ install_dependencies() {
 
     echo -e "${ORANGE}[2.5/7] Извлечение Titan Edge из контейнера...${NC}"
     
+    # Создаём контейнер
     CONTAINER_ID=$(docker create nezha123/titan-edge)
-    echo -e "${GREEN}[*] Создан временный контейнер с ID: $CONTAINER_ID${NC}"
+    echo -e "${GREEN}[*] Создан временный контейнер с ID: ${CONTAINER_ID}${NC}"
 
-    # Извлекаем бинарник titan-edge
-    docker cp "$CONTAINER_ID":/usr/bin/titan-edge ./titan-edge || \
-    docker cp "$CONTAINER_ID":/usr/local/bin/titan-edge ./titan-edge || \
-    docker cp "$CONTAINER_ID":/opt/titan-edge ./titan-edge || \
-    docker cp "$CONTAINER_ID":/root/titan-edge ./titan-edge || \
-    docker cp "$CONTAINER_ID":/bin/titan-edge ./titan-edge || \
-    docker cp "$CONTAINER_ID":/sbin/titan-edge ./titan-edge || \
-    docker cp "$CONTAINER_ID":/lib/titan-edge ./titan-edge
-
-    if [[ ! -f "./titan-edge" ]]; then
-        echo -e "${RED}[✗] Ошибка: titan-edge не найден в контейнере!${NC}"
-        docker logs "$CONTAINER_ID"
-        docker rm -f "$CONTAINER_ID"
+    # Копируем бинарник Titan Edge
+    docker cp "$CONTAINER_ID":/usr/bin/titan-edge ./titan-edge
+    if [[ ! -f ./titan-edge ]]; then
+        echo -e "${RED}[!] Ошибка: бинарник titan-edge не найден!${NC}"
         exit 1
     fi
     chmod +x ./titan-edge
     echo -e "${GREEN}[✓] titan-edge успешно извлечён!${NC}"
 
-    # Извлекаем библиотеку libgoworkerd.so
-    docker cp "$CONTAINER_ID":/usr/lib/libgoworkerd.so ./libgoworkerd.so || \
-    docker cp "$CONTAINER_ID":/usr/local/lib/libgoworkerd.so ./libgoworkerd.so || \
-    docker cp "$CONTAINER_ID":/opt/libgoworkerd.so ./libgoworkerd.so || \
-    docker cp "$CONTAINER_ID":/root/libgoworkerd.so ./libgoworkerd.so || \
-    docker cp "$CONTAINER_ID":/lib/libgoworkerd.so ./libgoworkerd.so
-
-    if [[ ! -f "./libgoworkerd.so" ]]; then
-        echo -e "${RED}[✗] Ошибка: libgoworkerd.so не найдена в контейнере!${NC}"
-        docker logs "$CONTAINER_ID"
-        docker rm -f "$CONTAINER_ID"
+    # Копируем библиотеку
+    docker cp "$CONTAINER_ID":/usr/lib/libgoworkerd.so ./libgoworkerd.so
+    if [[ ! -f ./libgoworkerd.so ]]; then
+        echo -e "${RED}[!] Ошибка: библиотека libgoworkerd.so не найдена!${NC}"
         exit 1
     fi
+
+    # Перемещаем библиотеку
     mv ./libgoworkerd.so /usr/lib/
     chmod 755 /usr/lib/libgoworkerd.so
     ldconfig
     echo -e "${GREEN}[✓] libgoworkerd.so успешно извлечена и зарегистрирована!${NC}"
 
-    # Удаляем временный контейнер
+    # Удаляем контейнер
     docker rm -f "$CONTAINER_ID"
-
     echo -e "${GREEN}[✓] Успешное извлечение бинарника и библиотеки!${NC}"
+    
+    echo -e "${ORANGE}Переход к следующему этапу установки...${NC}"
+    sleep 1
 
-    # Проверяем, настроен ли proxychains4
-    if [[ -f "/etc/proxychains4.conf" ]]; then
-        echo -e "${GREEN}[✓] Proxychains4 уже настроен. Пропускаем повторный ввод.${NC}"
+    # Проверяем, уже ли настроен proxychains4
+    if [ -f "/etc/proxychains4.conf" ]; then
+        echo -e "${GREEN}[✓] Proxychains4 уже настроен. Пропускаем...${NC}"
     else
         echo -e "${ORANGE}[2.6/7] Настройка proxychains4...${NC}"
         echo -e "${ORANGE}[*] Введите SOCKS5-прокси для установки (формат: host:port:user:pass):${NC}"
 
         while true; do
-            # Обнуляем переменные перед каждой попыткой
             PROXY_HOST=""
             PROXY_PORT=""
             PROXY_USER=""
@@ -154,17 +141,17 @@ install_dependencies() {
             echo -ne "${ORANGE}Введите SOCKS5-прокси для установки: ${NC}"
             read PROXY_INPUT
 
-            # Логируем ввод пользователя
             echo -e "${GREEN}[*] Введённый прокси: ${PROXY_INPUT}${NC}"
 
             # Разбиваем строку на переменные
             IFS=':' read -r PROXY_HOST PROXY_PORT PROXY_USER PROXY_PASS <<< "$PROXY_INPUT"
 
-            # Проверяем, что все переменные заполнены
             if [[ -z "$PROXY_HOST" || -z "$PROXY_PORT" || -z "$PROXY_USER" || -z "$PROXY_PASS" ]]; then
                 echo -e "${RED}[!] Некорректный формат! Пример: 1.2.3.4:1080:user:pass${NC}"
                 continue
             fi
+
+            echo -e "${GREEN}[*] Проверяем прокси: socks5://${PROXY_USER}:${PROXY_PASS}@${PROXY_HOST}:${PROXY_PORT}${NC}"
 
             # Создаём конфиг proxychains4
             cat > /etc/proxychains4.conf <<EOL
@@ -176,16 +163,35 @@ tcp_connect_time_out 8000
 socks5 $PROXY_HOST $PROXY_PORT $PROXY_USER $PROXY_PASS
 EOL
 
-            echo -e "${GREEN}[✓] Proxychains4 настроен!${NC}"
-            break
+            if [ ! -f "/etc/proxychains4.conf" ]; then
+                echo -e "${RED}[!] Ошибка: proxychains4.conf не записался!${NC}"
+                continue
+            fi
+            echo -e "${GREEN}[✓] Конфигурация proxychains4 записана!${NC}"
+
+            echo -e "${ORANGE}[*] Проверяем работоспособность proxychains4...${NC}"
+            proxychains4 -q curl -s --connect-timeout 3 https://api.ipify.org
+            if [[ $? -ne 0 ]]; then
+                echo -e "${RED}[!] Ошибка: proxychains4 не работает! Попробуйте другой прокси.${NC}"
+                continue
+            fi
+
+            PROXY_TEST=$(curl --proxy "socks5://${PROXY_USER}:${PROXY_PASS}@${PROXY_HOST}:${PROXY_PORT}" -s --connect-timeout 5 https://api.ipify.org)
+
+            if [[ -n "$PROXY_TEST" ]]; then
+                echo -e "${GREEN}[✓] Прокси успешно подключен! IP: $PROXY_TEST${NC}"
+                break
+            else
+                echo -e "${RED}[✗] Прокси не работает! Попробуйте другой прокси.${NC}"
+            fi
         done
     fi
 
+    echo -e "${GREEN}[✓] Proxychains4 настроен!${NC}"
     echo -e "${ORANGE}[3/7] Настройка брандмауэра...${NC}"
     sudo ufw allow 30000:40000/udp || true
     sudo ufw reload || true
 }
-
 
 
 ###############################################################################
