@@ -95,6 +95,8 @@ fi
 echo -e "${ORANGE}[6/7] Сборка Docker-образа Titan+ProxyChains...${NC}"
 
 # Создаём Dockerfile для кастомного образа
+echo ">>> DEBUG: Создаём Dockerfile.titan"
+
 cat > Dockerfile.titan <<EOF
 FROM docker.io/library/ubuntu:22.04
 
@@ -124,7 +126,7 @@ RUN apt update && \
     echo "strict_chain" > /etc/proxychains4.conf && \
     echo "proxy_dns" >> /etc/proxychains4.conf && \
     echo "tcp_read_time_out 15000" >> /etc/proxychains4.conf && \
-    echo "tcp_connect_time_out 8000" >> /etc/proxychains4.conf && \
+    echo "tcp_connect_time_out 8000" >> /etc/proxychains4.conf
 EOF
 
 # Собираем кастомный образ
@@ -432,6 +434,9 @@ restart_nodes() {
 }
 
 cleanup() {
+echo ">>> DEBUG: Очистка системы, проверяем удаление Dockerfile.titan"
+ls -lah | grep Dockerfile.titan
+
     echo -e "${ORANGE}\n[!] ПОЛНАЯ ОЧИСТКА [!]${NC}"
 
     echo -e "${ORANGE}[1/6] Удаление контейнеров...${NC}"
