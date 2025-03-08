@@ -67,14 +67,25 @@ install_dependencies() {
     sudo sed -i 's/#\$nrconf{restart} = "i"/\$nrconf{restart} = "a"/' /etc/needrestart/needrestart.conf
 
     echo -e "${ORANGE}[2.5/7] Настройка proxychains4...${NC}"
-    sudo bash -c 'cat > /etc/proxychains4.conf <<EOL
+    echo -e "${ORANGE}[*] Введите SOCKS5-прокси для установки (формат: host:port:user:pass):${NC}"
+    while true; do
+        read -p "Прокси для установки: " PROXY_INPUT
+        IFS=':' read -r PROXY_HOST PROXY_PORT PROXY_USER PROXY_PASS <<< "$PROXY_INPUT"
+        if [[ -z "$PROXY_HOST" || -z "$PROXY_PORT" || -z "$PROXY_USER" || -z "$PROXY_PASS" ]]; then
+            echo -e "${RED}[!] Некорректный формат! Пример: 1.2.3.4:1080:user:pass${NC}"
+            continue
+        fi
+        break
+    done
+
+    sudo bash -c "cat > /etc/proxychains4.conf <<EOL
 strict_chain
 proxy_dns
 tcp_read_time_out 15000
 tcp_connect_time_out 8000
 [ProxyList]
-socks5 \$PROXY_HOST \$PROXY_PORT \$PROXY_USER \$PROXY_PASS
-EOL'
+socks5 $PROXY_HOST $PROXY_PORT $PROXY_USER $PROXY_PASS
+EOL"
     echo -e "${GREEN}[✓] Proxychains4 настроен!${NC}"
 
     echo -e "${ORANGE}[3/7] Настройка брандмауэра...${NC}"
@@ -99,7 +110,7 @@ https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
     
     docker rm -f temp_titan 2>/dev/null || true
 
-    CONTAINER_ID=$(docker create nezha123/titan-edge:latest)
+    CONTAINER_ID=$(docker create -e ALL_PROXY="socks5://${PROXY_USER}:${PROXY_PASS}@${PROXY_HOST}:${PROXY_PORT}" nezha123/titan-edge:latest)
     echo -e "${GREEN}Создан временный контейнер с ID: $CONTAINER_ID${NC}"
 
     docker start "$CONTAINER_ID"
@@ -112,22 +123,25 @@ https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
         exit 1
     }
 
-    EDGE_PATH=$(docker exec "$CONTAINER_ID" find / -type f -name "titan-edge" 2>/dev/null | head -n 1)
-
-    if [ -z "$EDGE_PATH" ]; then
+    if docker exec "$CONTAINER_ID" test -f /usr/local/bin/titan-edge; then
+        docker cp "$CONTAINER_ID":/usr/local/bin/titan-edge ./titan-edge
+    else
         echo -e "${ORANGE}[*] titan-edge не найден стандартным способом! Ищем в overlay2...${NC}"
         CONTAINER_PATH=$(docker inspect --format='{{.GraphDriver.Data.UpperDir}}' "$CONTAINER_ID" 2>/dev/null)
-        EDGE_PATH=$(find "$CONTAINER_PATH" -type f -name "titan-edge" | head -n 1)
-        cp "$EDGE_PATH" ./titan-edge
-    else
-        docker cp "$CONTAINER_ID":"$EDGE_PATH" ./titan-edge
-    fi
+        if [ -n "$CONTAINER_PATH" ]; then
+            echo -e "${GREEN}Путь к контейнеру найден: $CONTAINER_PATH${NC}"
+            if [ -f "$CONTAINER_PATH/usr/bin/titan-edge" ]; then
+                echo -e "${GREEN}Копируем бинарник из overlay2!${NC}"
+                cp "$CONTAINER_PATH/usr/bin/titan-edge" ./titan-edge
+            fi
+        fi
 
-    if [ ! -f "./titan-edge" ]; then
-        echo -e "${RED}Ошибка: titan-edge отсутствует!${NC}"
-        docker logs "$CONTAINER_ID"
-        docker rm -f "$CONTAINER_ID"
-        exit 1
+        if [ ! -f "./titan-edge" ]; then
+            echo -e "${RED}Ошибка: titan-edge отсутствует!${NC}"
+            docker logs "$CONTAINER_ID"
+            docker rm -f "$CONTAINER_ID"
+            exit 1
+        fi
     fi
 
     chmod +x ./titan-edge
