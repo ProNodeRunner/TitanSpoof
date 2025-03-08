@@ -53,16 +53,24 @@ install_dependencies() {
     sudo systemctl disable unattended-upgrades || true
 
     sudo apt-get update -yq && sudo apt-get upgrade -yq
+    if [[ $? -ne 0 ]]; then
+        echo -e "${RED}[✗] Ошибка обновления пакетов!${NC}"
+        return 1
+    fi
 
     echo -e "${ORANGE}[2/7] Установка пакетов...${NC}"
     sudo apt-get install -yq \
         apt-transport-https ca-certificates curl gnupg lsb-release \
         jq screen cgroup-tools net-tools ccze netcat iptables-persistent bc \
         ufw git build-essential proxychains4 needrestart
+    if [[ $? -ne 0 ]]; then
+        echo -e "${RED}[✗] Ошибка установки пакетов!${NC}"
+        return 1
+    fi
 
     sudo sed -i 's/#\$nrconf{restart} = "i"/\$nrconf{restart} = "a"/' /etc/needrestart/needrestart.conf
 
-    echo -e "${ORANGE}[2.5/7] Настройка proxychains4...${NC}"
+    echo -e "${ORANGE}[3/7] Настройка proxychains4...${NC}"
     echo -e "${ORANGE}[*] Введите SOCKS5-прокси для установки (формат: host:port:user:pass):${NC}"
 
     while true; do
@@ -93,7 +101,9 @@ socks5 $PROXY_HOST $PROXY_PORT $PROXY_USER $PROXY_PASS
 EOL
 
     echo -e "${GREEN}[✓] Proxychains4 настроен!${NC}"
+    return 0
 }
+
 
 ###############################################################################
 # (3) Проверка proxychains перед скачиванием
