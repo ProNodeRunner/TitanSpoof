@@ -47,7 +47,6 @@ show_menu() {
 install_dependencies() {
     echo -e "${ORANGE}[1/7] Проверка блокировки пакетов...${NC}"
     
-    # Ожидание снятия блокировки dpkg, если процесс обновления идет
     while sudo lsof /var/lib/dpkg/lock-frontend &>/dev/null; do
         echo -e "${RED}Процесс обновления системы активен (unattended-upgrades), ждем завершения...${NC}"
         sleep 10
@@ -90,48 +89,60 @@ https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
     sudo systemctl enable --now docker
     sudo usermod -aG docker "$USER"
 
-    echo -e "${ORANGE}[6/7] Проверка наличия libgoworkerd.so...${NC}"
-    if [ ! -f "./libgoworkerd.so" ]; then
-        echo -e "${ORANGE}Извлекаем libgoworkerd.so из кастомного образа...${NC}"
+    echo -e "${ORANGE}[6/7] Проверка наличия libgoworkerd.so и titan-edge...${NC}"
+    
+    if [ ! -f "./libgoworkerd.so" ] || [ ! -f "./titan-edge" ]; then
+        echo -e "${ORANGE}Извлекаем файлы из официального образа...${NC}"
 
-        docker pull mytitan/proxy-titan-edge-custom || { echo -e "${RED}Ошибка: Не удалось скачать кастомный образ!${NC}"; exit 1; }
+        docker pull nezha123/titan-edge || { echo -e "${RED}Ошибка: Не удалось скачать образ titan-edge!${NC}"; exit 1; }
 
-        docker create --name titanextract mytitan/proxy-titan-edge-custom
+        docker create --name titanextract nezha123/titan-edge
         docker cp titanextract:/usr/lib/libgoworkerd.so ./libgoworkerd.so
+        docker cp titanextract:/usr/local/bin/titan-edge ./titan-edge
         docker rm -f titanextract
 
-        if [ ! -f "./libgoworkerd.so" ]; then
-            echo -e "${RED}Ошибка: libgoworkerd.so не найден!${NC}"
-            exit 1
-        fi
-    fi
-
-    echo -e "${ORANGE}[6.5/7] Проверка наличия titan-edge...${NC}"
-    if [ ! -f "./titan-edge" ]; then
-        echo -e "${ORANGE}Извлекаем titan-edge из кастомного образа...${NC}"
-
-        docker create --name titanextract mytitan/proxy-titan-edge-custom
-        docker start titanextract
-        sleep 3
-
-        echo -e "${ORANGE}[*] Поиск бинарника titan-edge внутри контейнера...${NC}"
-        BINARY_PATH=$(docker exec titanextract find / -name "titan-edge" 2>/dev/null | head -n1)
-        
-        if [ -z "$BINARY_PATH" ]; then
-            echo -e "${RED}Ошибка: Не удалось найти бинарник titan-edge!${NC}"
-            docker rm -f titanextract
+        if [ ! -f "./libgoworkerd.so" ] || [ ! -f "./titan-edge" ]; then
+            echo -e "${RED}Ошибка: Не удалось извлечь файлы!${NC}"
             exit 1
         fi
 
-        docker cp titanextract:"$BINARY_PATH" ./titan-edge
-        docker rm -f titanextract
-
-        if [ ! -f "./titan-edge" ]; then
-            echo -e "${RED}Ошибка: Не удалось извлечь titan-edge!${NC}"
-            exit 1
-        fi
         chmod +x ./titan-edge
     fi
+
+    echo -e "${ORANGE}[6.5/7] Сборка кастомного Docker-образа...${NC}"
+    
+    cat > Dockerfile.titan <<EOF
+FROM ubuntu:22.04
+
+COPY libgoworkerd.so /usr/lib/libgoworkerd.so
+COPY titan-edge /usr/local/bin/titan-edge
+
+RUN chmod +x /usr/local/bin/titan-edge && \
+    ln -s /usr/local/bin/titan-edge /usr/bin/titan-edge && \
+    apt update && \
+    DEBIAN_FRONTEND=noninteractive apt install -y proxychains4 curl && \
+    echo "strict_chain" > /etc/proxychains4.conf && \
+    echo "proxy_dns" >> /etc/proxychains4.conf && \
+    echo "tcp_read_time_out 15000" >> /etc/proxychains4.conf && \
+    echo "tcp_connect_time_out 8000" >> /etc/proxychains4.conf && \
+    echo "[ProxyList]" >> /etc/proxychains4.conf
+
+ENV PROXY_HOST=""
+ENV PROXY_PORT=""
+ENV PROXY_USER=""
+ENV PROXY_PASS=""
+ENV ALL_PROXY=""
+
+CMD ["sh", "-c", \
+    "echo 'socks5 ${PROXY_HOST} ${PROXY_PORT} ${PROXY_USER} ${PROXY_PASS}' >> /etc/proxychains4.conf && \
+    export ALL_PROXY=socks5://${PROXY_USER}:${PROXY_PASS}@${PROXY_HOST}:${PROXY_PORT} && \
+    proxychains4 /usr/bin/titan-edge daemon start --init --url=https://cassini-locator.titannet.io:5000/rpc/v0"]
+EOF
+
+    docker build -t mytitan/proxy-titan-edge-custom -f Dockerfile.titan . || {
+        echo -e "${RED}[✗] Ошибка сборки Docker-образа!${NC}"
+        exit 1
+    }
 
     echo -e "${ORANGE}[7/7] Завершение установки...${NC}"
     echo -e "${GREEN}[✓] Titan + ProxyChains готово!${NC}"
