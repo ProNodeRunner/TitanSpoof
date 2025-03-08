@@ -45,52 +45,60 @@ show_menu() {
 # (1) Установка компонентов
 ###############################################################################
 install_dependencies() {
-    echo -e "${ORANGE}[1/7] Инициализация системы...${NC}"
-    export DEBIAN_FRONTEND=noninteractive
-    sudo bash -c "echo 'iptables-persistent iptables-persistent/autosave_v4 boolean false' | debconf-set-selections"
-    sudo bash -c "echo 'iptables-persistent iptables-persistent/autosave_v6 boolean false' | debconf-set-selections"
+    echo -e "${ORANGE}[1/7] Проверка блокировки пакетов...${NC}"
+    
+    # Ожидание снятия блокировки dpkg, если процесс обновления идет
+    while sudo lsof /var/lib/dpkg/lock-frontend &>/dev/null; do
+        echo -e "${RED}Процесс обновления системы активен (unattended-upgrades), ждем завершения...${NC}"
+        sleep 10
+    done
 
+    echo -e "${ORANGE}[2/7] Инициализация системы...${NC}"
+    export DEBIAN_FRONTEND=noninteractive
     sudo apt-get update -yq && sudo apt-get upgrade -yq
 
-    echo -e "${ORANGE}[2/7] Установка пакетов...${NC}"
+    echo -e "${ORANGE}[3/7] Установка пакетов...${NC}"
     sudo apt-get install -yq \
       apt-transport-https ca-certificates curl gnupg lsb-release \
       jq screen cgroup-tools net-tools ccze netcat iptables-persistent bc \
-      ufw git build-essential
+      ufw git build-essential || { echo -e "${RED}Ошибка установки пакетов!${NC}"; exit 1; }
 
-    echo -e "${ORANGE}[3/7] Настройка брандмауэра...${NC}"
+    echo -e "${ORANGE}[4/7] Настройка брандмауэра...${NC}"
     sudo ufw allow 30000:40000/udp || true
     sudo ufw reload || true
 
-    echo -e "${ORANGE}[4/7] Установка Docker...${NC}"
+    echo -e "${ORANGE}[5/7] Установка Docker...${NC}"
+    
+    # Удаляем старые ключи Docker перед установкой
     sudo rm -f /usr/share/keyrings/docker-archive-keyring.gpg
     curl -fsSL https://download.docker.com/linux/ubuntu/gpg | \
         sudo gpg --batch --yes --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
-
+    
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] \
 https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
       | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
 
     sudo apt-get update -yq
-    sudo apt-get install -yq docker-ce docker-ce-cli containerd.io
-    sudo systemctl enable --now docker
+    sudo apt-get install -yq docker-ce docker-ce-cli containerd.io || { echo -e "${RED}Ошибка установки Docker!${NC}"; exit 1; }
+    sudo systemctl enable --now docker || { echo -e "${RED}Ошибка запуска Docker!${NC}"; exit 1; }
     sudo usermod -aG docker "$USER"
 
-   echo -e "${ORANGE}[5/7] Извлечение libgoworkerd.so...${NC}"
-
-# Проверяем, есть ли уже библиотека, чтобы не загружать лишний раз
-if [ ! -f "./libgoworkerd.so" ]; then
-    echo -e "${ORANGE}Извлекаем libgoworkerd.so из кастомного образа...${NC}"
-    
-    docker create --name temp_titan mytitan/proxy-titan-edge-custom
-    docker cp temp_titan:/usr/lib/libgoworkerd.so ./libgoworkerd.so
-    docker rm -f temp_titan
+    echo -e "${ORANGE}[6/7] Проверка наличия libgoworkerd.so...${NC}"
 
     if [ ! -f "./libgoworkerd.so" ]; then
-        echo -e "${RED}Ошибка: libgoworkerd.so не найден!${NC}"
-        exit 1
+        echo -e "${ORANGE}Извлекаем libgoworkerd.so из кастомного образа...${NC}"
+        
+        docker create --name temp_titan mytitan/proxy-titan-edge-custom
+        docker cp temp_titan:/usr/lib/libgoworkerd.so ./libgoworkerd.so
+        docker rm -f temp_titan
+
+        if [ ! -f "./libgoworkerd.so" ]; then
+            echo -e "${RED}Ошибка: libgoworkerd.so не найден!${NC}"
+            exit 1
+        fi
     fi
-fi
+
+echo -e "${GREEN}[✓] Установка завершена!${NC}"
 
 echo -e "${ORANGE}[6/7] Сборка Docker-образа Titan+ProxyChains...${NC}"
 
