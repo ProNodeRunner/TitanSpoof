@@ -45,111 +45,87 @@ show_menu() {
 # (1) Установка компонентов
 ###############################################################################
 install_dependencies() {
-    echo -e "${ORANGE}[1/7] Проверка блокировки пакетов...${NC}"
-    
-    while sudo lsof /var/lib/dpkg/lock-frontend &>/dev/null; do
-        echo -e "${RED}Процесс обновления системы активен (unattended-upgrades), ждем завершения...${NC}"
-        sleep 10
-    done
-
-    echo -e "${ORANGE}[2/7] Инициализация системы...${NC}"
-    
-    export DEBIAN_FRONTEND=noninteractive
-    export DEBCONF_NONINTERACTIVE_SEEN=true
-
-    echo iptables-persistent iptables-persistent/autosave_v4 boolean true | sudo debconf-set-selections
-    echo iptables-persistent iptables-persistent/autosave_v6 boolean true | sudo debconf-set-selections
-
-    echo -e "${ORANGE}[3/7] Остановка автоматических обновлений...${NC}"
+    echo -e "${ORANGE}[1/7] Остановка автоматических обновлений...${NC}"
     sudo systemctl stop unattended-upgrades
-    sudo systemctl disable unattended-upgrades
+    sudo systemctl disable unattended-upgrades || true
 
-    echo -e "${ORANGE}[4/7] Обновление и установка пакетов...${NC}"
-    sudo apt-get update -yq && sudo apt-get upgrade -yq
-    sudo apt-get install -yq \
-      apt-transport-https ca-certificates curl gnupg lsb-release \
-      jq screen cgroup-tools net-tools ccze netcat iptables-persistent bc \
-      ufw git build-essential needrestart
+    echo -e "${ORANGE}[2/7] Установка зависимостей...${NC}"
+    export DEBIAN_FRONTEND=noninteractive
+    export NEEDRESTART_MODE=a  # Отключаем запрос на перезапуск сервисов
 
-    echo -e "${ORANGE}[5/7] Отключение интерактивных запросов о перезагрузке...${NC}"
-    sudo sed -i 's/#\$nrconf{restart} = "i"/\$nrconf{restart} = "a"/' /etc/needrestart/needrestart.conf
+    sudo apt-get update -yq
+    sudo apt-get install -yq apt-transport-https ca-certificates curl gnupg lsb-release jq \
+        screen cgroup-tools net-tools ccze netcat iptables-persistent bc ufw git \
+        build-essential needrestart
 
-    echo -e "${ORANGE}[6/7] Установка Docker...${NC}"
-    
+    echo -e "${ORANGE}[3/7] Установка Docker...${NC}"
     sudo rm -f /usr/share/keyrings/docker-archive-keyring.gpg
-    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | \
-        sudo gpg --batch --yes --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
-
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] \
-https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
-      | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --batch --yes --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | \
+        sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
 
     sudo apt-get update -yq
     sudo apt-get install -yq docker-ce docker-ce-cli containerd.io
     sudo systemctl enable --now docker
     sudo usermod -aG docker "$USER"
 
-echo -e "${ORANGE}[6.3/7] Проверка наличия libgoworkerd.so и titan-edge...${NC}"
-
-if [ ! -f "./libgoworkerd.so" ] || [ ! -f "./titan-edge" ]; then
-    echo -e "${ORANGE}Извлекаем файлы из официального образа...${NC}"
-
-    docker pull nezha123/titan-edge || { 
-        echo -e "${RED}Ошибка: Не удалось скачать образ titan-edge!${NC}"; 
-        exit 1; 
-    }
-
-    docker create --name titanextract nezha123/titan-edge
-    docker start titanextract
-    sleep 3  # Ждем, пока контейнер полностью запустится
-
-    # Копируем libgoworkerd.so
-    docker cp titanextract:/usr/lib/libgoworkerd.so ./libgoworkerd.so
-
-    echo -e "${ORANGE}[*] Поиск бинарника titan-edge внутри контейнера...${NC}"
-    
-    # Пробуем найти `titan-edge` в контейнере
-    BINARY_PATH=$(docker exec titanextract find / -type f -name "titan-edge" 2>/dev/null | grep -E '/titan-edge$' | head -n1)
-
-    if [ -z "$BINARY_PATH" ]; then
-        echo -e "${RED}[*] titan-edge не найден стандартным способом! Ищем в /var/lib/docker/overlay2/...${NC}"
-        
-        # Находим путь в overlay2
-        CONTAINER_ID=$(docker inspect --format='{{.GraphDriver.Data.UpperDir}}' titanextract 2>/dev/null)
-
-        if [ -z "$CONTAINER_ID" ]; then
-            echo -e "${RED}Ошибка: Не удалось определить путь контейнера в overlay2!${NC}"
-            docker rm -f titanextract
-            exit 1
-        fi
-
-        BINARY_PATH="$CONTAINER_ID/usr/bin/titan-edge"
-
-        if [ ! -f "$BINARY_PATH" ]; then
-            echo -e "${RED}Ошибка: Файл titan-edge отсутствует даже в overlay2!${NC}"
-            docker rm -f titanextract
-            exit 1
-        fi
-
-        echo -e "${GREEN}[*] Найден путь: $BINARY_PATH${NC}"
-        cp "$BINARY_PATH" ./titan-edge
-    else
-        echo -e "${GREEN}[*] Найден бинарник в контейнере: $BINARY_PATH${NC}"
-        docker cp titanextract:"$BINARY_PATH" ./titan-edge
-    fi
-
-    docker rm -f titanextract
+    echo -e "${ORANGE}[4/7] Проверка наличия libgoworkerd.so и titan-edge...${NC}"
 
     if [ ! -f "./libgoworkerd.so" ] || [ ! -f "./titan-edge" ]; then
-        echo -e "${RED}Ошибка: Не удалось извлечь файлы!${NC}"
-        exit 1
+        echo -e "${ORANGE}[*] Извлекаем файлы из официального образа...${NC}"
+        docker pull nezha123/titan-edge
+
+        docker create --name titanextract nezha123/titan-edge
+        docker start titanextract
+        sleep 3  # Даём контейнеру запуститься
+
+        docker cp titanextract:/usr/lib/libgoworkerd.so ./libgoworkerd.so || {
+            echo -e "${RED}Ошибка: Не удалось скопировать libgoworkerd.so!${NC}"
+            docker rm -f titanextract
+            exit 1
+        }
+
+        echo -e "${ORANGE}[*] Поиск бинарника titan-edge в контейнере...${NC}"
+        BINARY_PATH=$(docker exec titanextract find / -type f -name "titan-edge" 2>/dev/null | grep -E '/titan-edge$' | head -n1)
+
+        if [ -z "$BINARY_PATH" ]; then
+            echo -e "${RED}[*] titan-edge не найден стандартным способом! Ищем в /var/lib/docker/overlay2/...${NC}"
+            
+            CONTAINER_PATH=$(docker inspect --format='{{.GraphDriver.Data.UpperDir}}' titanextract 2>/dev/null)
+
+            if [ -z "$CONTAINER_PATH" ]; then
+                echo -e "${RED}Ошибка: Не удалось определить путь контейнера в overlay2!${NC}"
+                docker rm -f titanextract
+                exit 1
+            fi
+
+            BINARY_PATH="$CONTAINER_PATH/usr/bin/titan-edge"
+
+            if [ ! -f "$BINARY_PATH" ]; then
+                echo -e "${RED}Ошибка: Файл titan-edge отсутствует даже в overlay2!${NC}"
+                docker rm -f titanextract
+                exit 1
+            fi
+
+            echo -e "${GREEN}[*] Найден путь: $BINARY_PATH${NC}"
+            cp "$BINARY_PATH" ./titan-edge
+        else
+            echo -e "${GREEN}[*] Найден бинарник в контейнере: $BINARY_PATH${NC}"
+            docker cp titanextract:"$BINARY_PATH" ./titan-edge
+        fi
+
+        docker rm -f titanextract
+
+        if [ ! -f "./libgoworkerd.so" ] || [ ! -f "./titan-edge" ]; then
+            echo -e "${RED}Ошибка: Не удалось извлечь файлы!${NC}"
+            exit 1
+        fi
+
+        chmod +x ./titan-edge
     fi
 
-    chmod +x ./titan-edge
-fi
+    echo -e "${ORANGE}[5/7] Сборка кастомного Docker-образа...${NC}"
 
-    echo -e "${ORANGE}[6.5/7] Сборка кастомного Docker-образа...${NC}"
-    
     cat > Dockerfile.titan <<EOF
 FROM ubuntu:22.04
 
@@ -183,8 +159,10 @@ EOF
         exit 1
     }
 
-    echo -e "${ORANGE}[7/7] Завершение установки...${NC}"
-    echo -e "${GREEN}[✓] Titan + ProxyChains готово!${NC}"
+    echo -e "${ORANGE}[6/7] Отключение интерактивных запросов о перезагрузке...${NC}"
+    sudo sed -i 's/#\$nrconf{restart} = "i"/\$nrconf{restart} = "a"/' /etc/needrestart/needrestart.conf
+
+    echo -e "${GREEN}[7/7] Установка завершена! Titan + ProxyChains готово к работе!${NC}"
 }
 
 ###############################################################################
