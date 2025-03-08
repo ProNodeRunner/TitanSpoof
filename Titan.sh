@@ -51,7 +51,7 @@ install_dependencies() {
 
     echo -e "${ORANGE}[2/7] Установка зависимостей...${NC}"
     export DEBIAN_FRONTEND=noninteractive
-    export NEEDRESTART_MODE=a  # Отключаем запрос на перезапуск сервисов
+    export NEEDRESTART_MODE=a  # Полностью отключаем needrestart
 
     sudo apt-get update -yq
     sudo apt-get install -yq apt-transport-https ca-certificates curl gnupg lsb-release jq \
