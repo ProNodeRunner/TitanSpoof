@@ -231,16 +231,14 @@ generate_fake_mac() {
 ###############################################################################
 # (3) Настройка proxychains4 и создание кастомного контейнера
 ###############################################################################
-echo -e "${ORANGE}[3/7] Настройка proxychains4 и создание кастомного контейнера...${NC}"
+setup_proxychains_and_build() {
+    echo -e "${ORANGE}[3/7] Настройка proxychains4 и создание кастомного контейнера...${NC}"
 
-# Проверяем, нужно ли использовать прокси
-read -p "Хотите использовать SOCKS5-прокси? (y/n): " USE_PROXY
-if [[ "$USE_PROXY" == "y" ]]; then
-    echo -ne "${ORANGE}Введите SOCKS5-прокси (формат: host:port:user:pass): ${NC}"
-    read PROXY_INPUT
+    # Проверяем, нужно ли использовать прокси
+    read -p "Введите SOCKS5-прокси (формат: host:port:user:pass): " PROXY_INPUT
     IFS=':' read -r PROXY_HOST PROXY_PORT PROXY_USER PROXY_PASS <<< "$PROXY_INPUT"
 
-    if [[ -z "$PROXY_HOST" || -z "$PROXY_PORT" ]]; then
+    if [[ -z "$PROXY_HOST" || -z "$PROXY_PORT" || -z "$PROXY_USER" || -z "$PROXY_PASS" ]]; then
         echo -e "${RED}[✗] Ошибка: Неправильный формат прокси!${NC}"
         exit 1
     fi
@@ -255,10 +253,10 @@ tcp_connect_time_out 8000
 socks5 $PROXY_HOST $PROXY_PORT $PROXY_USER $PROXY_PASS
 EOL
 
-echo -e "${GREEN}[✓] Proxychains4 настроен!${NC}"
+    echo -e "${GREEN}[✓] Proxychains4 настроен!${NC}"
 
-# ✅ Создаём Dockerfile для кастомного контейнера
-cat > Dockerfile <<EOF
+    # ✅ Создаём Dockerfile для кастомного контейнера
+    cat > Dockerfile <<EOF
 FROM ubuntu:22.04
 COPY titan-edge /usr/bin/titan-edge
 COPY libgoworkerd.so /usr/lib/libgoworkerd.so
@@ -272,13 +270,12 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 EOF
 
-if [[ "$USE_PROXY" == "y" ]]; then
     echo "COPY proxychains4.conf /etc/proxychains4.conf" >> Dockerfile
-fi
 
-# ✅ Собираем кастомный контейнер
-docker build -t mytitan/proxy-titan-edge .
-echo -e "${GREEN}[✓] Кастомный контейнер собран!${NC}"
+    # ✅ Собираем кастомный контейнер
+    docker build -t mytitan/proxy-titan-edge .
+    echo -e "${GREEN}[✓] Кастомный контейнер собран!${NC}"
+}
 
 ###############################################################################
 # (4) Создание/запуск ноды
@@ -558,6 +555,7 @@ case "$1" in
                 5) restart_nodes ;;
                 6) cleanup ;;
                 7) exit 0 ;;
+                8) setup_proxychains_and_build ;;  # ✅ Вызов новой функции
                 *)
                     echo -e "${RED}Неверный выбор!${NC}"
                     sleep 1
