@@ -554,8 +554,7 @@ case "$1" in
                 4) show_logs ;;
                 5) restart_nodes ;;
                 6) cleanup ;;
-                7) exit 0 ;;
-                8) setup_proxychains_and_build ;;  # ✅ Вызов новой функции
+                7) exit 0 ;;  # ✅ Теперь последний пункт — выход
                 *)
                     echo -e "${RED}Неверный выбор!${NC}"
                     sleep 1
