@@ -317,6 +317,9 @@ RUN apt-get update && apt-get install -y \
     ca-certificates \
     proxychains4 \
     && rm -rf /var/lib/apt/lists/*
+
+# Даем права на выполнение бинарника Titan
+RUN chmod +x /usr/bin/titan-edge
 EOF
 
     # ✅ Добавляем конфигурацию proxychains в контейнер
