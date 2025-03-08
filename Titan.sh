@@ -1,21 +1,10 @@
 #!/bin/bash
 ################################################################################
 # TITAN BLOCKCHAIN NODE FINAL INSTALLATION SCRIPT
+# (ProxyChains + Socks5 + Titan) using:
+# - "docker pull nezha123/titan-edge" + docker cp titanextract:/usr/local/bin/titan-edge ...
+# - Then build local image “mytitan/proxy-titan-edge”
 ################################################################################
-
-LOG_FILE="/tmp/titan_install.log"
-DEBUG_LOG="/tmp/debug.log"
-
-# Очищаем лог при запуске
-echo "=== Лог запуска: $(date) ===" > "$LOG_FILE"
-echo "=== Отладка запуска: $(date) ===" > "$DEBUG_LOG"
-
-# Перенаправляем STDOUT и STDERR в файл и терминал (исправлено)
-exec > >(tee -a "$LOG_FILE") 2> >(tee -a "$DEBUG_LOG" >&2)
-
-log() {
-    echo -e "$(date +'%Y-%m-%d %H:%M:%S') $1" | tee -a "$LOG_FILE"
-}
 
 CONFIG_FILE="/etc/titan_nodes.conf"
 LOGO_URL="https://raw.githubusercontent.com/ProNodeRunner/Logo/main/Logo"
@@ -32,7 +21,7 @@ declare -A USED_PORTS=()
 declare -A USED_PROXIES=()
 
 ###############################################################################
-# (A) Логотип и меню (Исправлено)
+# (A) Логотип и меню
 ###############################################################################
 show_logo() {
     local raw
@@ -46,164 +35,76 @@ show_logo() {
 
 show_menu() {
     clear
-    if [[ -z "$LOGO_DISPLAYED" ]]; then
-        show_logo
-        LOGO_DISPLAYED=1  # Показываем логотип только 1 раз
-    fi
+    tput setaf 3
+    show_logo
     echo -e "1) Установить компоненты\n2) Создать/запустить ноды\n3) Проверить статус\n4) Показать логи\n5) Перезапустить\n6) Очистка\n7) Выход"
+    tput sgr0
 }
 
 ###############################################################################
-# (1) Установка компонентов (Исправленный)
+# (1) Установка компонентов
 ###############################################################################
 install_dependencies() {
     echo -e "${ORANGE}[1/7] Инициализация системы...${NC}"
     export DEBIAN_FRONTEND=noninteractive
     export NEEDRESTART_MODE=a  
 
+    sudo bash -c "echo 'iptables-persistent iptables-persistent/autosave_v4 boolean false' | debconf-set-selections"
+    sudo bash -c "echo 'iptables-persistent iptables-persistent/autosave_v6 boolean false' | debconf-set-selections"
+    echo 'debconf debconf/frontend select Noninteractive' | sudo debconf-set-selections  
+
     sudo systemctl stop unattended-upgrades
     sudo systemctl disable unattended-upgrades || true
 
     sudo apt-get update -yq && sudo apt-get upgrade -yq
-    if [[ $? -ne 0 ]]; then
-        echo -e "${RED}[✗] Ошибка обновления пакетов!${NC}"
-        return 1
-    fi
 
     echo -e "${ORANGE}[2/7] Установка пакетов...${NC}"
     sudo apt-get install -yq \
         apt-transport-https ca-certificates curl gnupg lsb-release \
         jq screen cgroup-tools net-tools ccze netcat iptables-persistent bc \
         ufw git build-essential proxychains4 needrestart
-    if [[ $? -ne 0 ]]; then
-        echo -e "${RED}[✗] Ошибка установки пакетов!${NC}"
-        return 1
-    fi
 
     sudo sed -i 's/#\$nrconf{restart} = "i"/\$nrconf{restart} = "a"/' /etc/needrestart/needrestart.conf
 
-    echo -e "${ORANGE}[3/7] Настройка proxychains4...${NC}"
+    echo -e "${ORANGE}[2.5/7] Настройка proxychains4...${NC}"
     echo -e "${ORANGE}[*] Введите SOCKS5-прокси для установки (формат: host:port:user:pass):${NC}"
 
     while true; do
         read -p "Прокси для установки: " PROXY_INPUT
-        
-        # Правильное разбиение прокси-строки
-        PROXY_HOST=$(echo "$PROXY_INPUT" | cut -d':' -f1)
-        PROXY_PORT=$(echo "$PROXY_INPUT" | cut -d':' -f2)
-        PROXY_USER=$(echo "$PROXY_INPUT" | cut -d':' -f3)
-        PROXY_PASS=$(echo "$PROXY_INPUT" | cut -d':' -f4-)
+        IFS=':' read -r PROXY_HOST PROXY_PORT PROXY_USER PROXY_PASS <<< "$PROXY_INPUT"
 
-        # Проверяем, что переменные не пустые
         if [[ -z "$PROXY_HOST" || -z "$PROXY_PORT" || -z "$PROXY_USER" || -z "$PROXY_PASS" ]]; then
             echo -e "${RED}[!] Некорректный формат! Пример: 1.2.3.4:1080:user:pass${NC}"
             continue
         fi
 
-        # Выводим переменные для диагностики (скрываем пароль)
-        echo -e "${ORANGE}[*] Используем прокси: socks5://${PROXY_USER}:*****@${PROXY_HOST}:${PROXY_PORT}${NC}"
-
-        # Проверяем соединение через curl (детальная проверка)
-        PROXY_IP=$(curl --proxy "socks5h://${PROXY_USER}:${PROXY_PASS}@${PROXY_HOST}:${PROXY_PORT}" -s --connect-timeout 5 https://api.ipify.org)
-
-        if [[ -n "$PROXY_IP" ]]; then
-            echo -e "${GREEN}[✓] Прокси успешно подключен! IP: $PROXY_IP${NC}"
+        # Проверка доступности прокси
+        if curl --proxy "socks5://${PROXY_USER}:${PROXY_PASS}@${PROXY_HOST}:${PROXY_PORT}" -s --connect-timeout 5 https://api.ipify.org >/dev/null; then
+            echo -e "${GREEN}[✓] Прокси успешно подключен!${NC}"
             break
         else
-            echo -e "${RED}[✗] Ошибка: прокси не работает!${NC}"
-            echo -e "${RED}[*] Проверьте правильность логина, пароля или доступность прокси!${NC}"
+            echo -e "${RED}[✗] Прокси не работает! Попробуйте другой.${NC}"
         fi
     done
 
-    # Создаём конфиг proxychains4
-    echo -e "${ORANGE}[*] Записываем конфигурацию proxychains4...${NC}"
     cat > /etc/proxychains4.conf <<EOL
 strict_chain
 proxy_dns
 tcp_read_time_out 15000
 tcp_connect_time_out 8000
 [ProxyList]
-socks5h $PROXY_HOST $PROXY_PORT $PROXY_USER $PROXY_PASS
+socks5 $PROXY_HOST $PROXY_PORT $PROXY_USER $PROXY_PASS
 EOL
 
-    # Выводим конечный конфиг для проверки
-    echo -e "${GREEN}[✓] Proxychains4 настроен! Конфигурация:${NC}"
-    cat /etc/proxychains4.conf | sed 's/:[^:]*@/:*****@/g'  # Скрываем пароль
+    echo -e "${GREEN}[✓] Proxychains4 настроен!${NC}"
 
-    return 0
+    echo -e "${ORANGE}[3/7] Настройка брандмауэра...${NC}"
+    sudo ufw allow 30000:40000/udp || true
+    sudo ufw reload || true
 }
 
 ###############################################################################
-# (3) Проверка proxychains перед скачиванием
-###############################################################################
-test_proxychains4() {
-    echo -e "${ORANGE}[*] Проверяем работу proxychains4 перед скачиванием образа...${NC}"
-    
-    if ! proxychains4 curl -s --connect-timeout 5 https://api.ipify.org; then
-        echo -e "${RED}[✗] Ошибка: proxychains4 не работает!${NC}"
-        exit 1
-    fi
-
-    echo -e "${GREEN}[✓] Proxychains4 работает!${NC}"
-}
-###############################################################################
-# (4) Скачивание Docker-образа через proxychains4
-###############################################################################
-pull_titan_image() {
-    echo -e "${ORANGE}[4/7] Скачивание Docker-образа nezha123/titan-edge...${NC}"
-    
-    # Проверяем, работает ли proxychains4
-    if proxychains4 curl -s --connect-timeout 5 https://api.ipify.org >/dev/null; then
-        echo -e "${GREEN}[✓] Proxychains4 работает! Загружаем через него...${NC}"
-        if proxychains4 docker pull nezha123/titan-edge:latest; then
-            echo -e "${GREEN}[✓] Образ успешно загружен через proxychains4!${NC}"
-            return
-        fi
-    fi
-
-    echo -e "${RED}[✗] Ошибка загрузки через proxychains4. Пробуем напрямую...${NC}"
-
-    if docker pull nezha123/titan-edge:latest; then
-        echo -e "${GREEN}[✓] Образ успешно загружен напрямую!${NC}"
-    else
-        echo -e "${RED}[✗] Полная ошибка: не удалось загрузить Docker-образ!${NC}"
-        exit 1
-    fi
-}
-
-
-###############################################################################
-# (4) Извлечение бинарников Titan
-###############################################################################
-extract_titan_edge() {
-    docker rm -f temp_titan 2>/dev/null || true
-
-    CONTAINER_ID=$(docker create nezha123/titan-edge:latest)
-    echo -e "${GREEN}Создан временный контейнер с ID: $CONTAINER_ID${NC}"
-
-    docker start "$CONTAINER_ID"
-    sleep 5  
-
-    echo -e "${ORANGE}[*] Проверяем IP внутри контейнера...${NC}"
-    docker exec "$CONTAINER_ID" curl -s ifconfig.me
-
-    docker cp "$CONTAINER_ID":/usr/lib/libgoworkerd.so ./libgoworkerd.so || {
-        echo -e "${RED}[✗] Ошибка копирования libgoworkerd.so!${NC}"
-        exit 1
-    }
-
-    docker cp "$CONTAINER_ID":/usr/local/bin/titan-edge ./titan-edge || {
-        echo -e "${RED}Ошибка: titan-edge отсутствует!${NC}"
-        exit 1
-    }
-
-    chmod +x ./titan-edge
-    docker rm -f "$CONTAINER_ID"
-    echo -e "${GREEN}[✓] Titan Edge успешно извлечен!${NC}"
-}
-
-###############################################################################
-# (5) Генерация IP, портов, CPU/RAM/SSD
+# (2) Генерация IP, портов, CPU/RAM/SSD
 ###############################################################################
 generate_country_ip() {
     local first_oct=164
@@ -224,42 +125,69 @@ generate_random_port() {
 }
 
 generate_spoofer_profile() {
-    local cpu_options=(12 14 16 18 20 22 24 26 28 30 32 34 36 38 40 42 44 46)
-    local ram_options=(64 96 128 160 192 224 256 320 384 448 512)
-    local ssd_options=(512 1024 1536 2048 2560 3072 3584 4096)
+    local cpus=(8 10 12 14 16 18 20 22 24 26 28 30 32)
+    local c=${cpus[$RANDOM % ${#cpus[@]}]}
+    local ram=$((32 + (RANDOM % 16)*32))
+    local ssd=$((512 + (RANDOM % 20)*512))
+    echo "$c,$ram,$ssd"
+}
 
-    local cpu_val=${cpu_options[$RANDOM % ${#cpu_options[@]}]}
-    local ram_val=${ram_options[$RANDOM % ${#ram_options[@]}]}
-    local ssd_val=${ssd_options[$RANDOM % ${#ssd_options[@]}]}
-
-    # Гарантируем, что CPU/RAM соответствуют друг другу
-    while true; do
-        ram_val=${ram_options[$RANDOM % ${#ram_options[@]}]}
-        ssd_val=${ssd_options[$RANDOM % ${#ssd_options[@]}]}
-
-        # CPU до 16 ядер → минимум 64GB RAM
-        # CPU 36+ ядер → минимум 128GB RAM
-        # CPU 44+ ядер → минимум 192GB RAM
-        if ((cpu_val <= 16 && ram_val >= 64)) || ((cpu_val >= 36 && ram_val >= 128)) || ((cpu_val >= 44 и ram_val >= 192)); then
-            break
-        fi
-    done
-
-    echo "$cpu_val,$ram_val,$ssd_val"
+generate_fake_mac() {
+    printf "02:%02x:%02x:%02x:%02x:%02x" $((RANDOM%256)) $((RANDOM%256)) $((RANDOM%256)) $((RANDOM%256)) $((RANDOM%256))
 }
 
 ###############################################################################
-# (6) Создание/запуск ноды
+# (3) Извлечение бинарников Titan
+###############################################################################
+extract_titan_edge() {
+    docker rm -f temp_titan 2>/dev/null || true
+
+    CONTAINER_ID=$(docker create nezha123/titan-edge:latest)
+    echo -e "${GREEN}Создан временный контейнер с ID: $CONTAINER_ID${NC}"
+
+    docker start "$CONTAINER_ID"
+    sleep 5  
+
+    # ✅ Проверяем, какой IP видит контейнер (должен быть IP прокси)
+    echo -e "${ORANGE}[*] Проверяем IP внутри контейнера...${NC}"
+    docker exec "$CONTAINER_ID" curl -s ifconfig.me
+
+    docker cp "$CONTAINER_ID":/usr/lib/libgoworkerd.so ./libgoworkerd.so || {
+        echo -e "${RED}[✗] Ошибка копирования libgoworkerd.so!${NC}"
+        docker logs "$CONTAINER_ID"
+        docker rm -f "$CONTAINER_ID"
+        exit 1
+    }
+
+    docker cp "$CONTAINER_ID":/usr/local/bin/titan-edge ./titan-edge || {
+        echo -e "${ORANGE}[*] titan-edge не найден стандартным способом! Ищем в overlay2...${NC}"
+        CONTAINER_PATH=$(docker inspect --format='{{.GraphDriver.Data.UpperDir}}' "$CONTAINER_ID" 2>/dev/null)
+        if [ -n "$CONTAINER_PATH" ]; then
+            echo -e "${GREEN}Путь к контейнеру найден: $CONTAINER_PATH${NC}"
+            if [ -f "$CONTAINER_PATH/usr/bin/titan-edge" ]; then
+                echo -e "${GREEN}Копируем бинарник из overlay2!${NC}"
+                cp "$CONTAINER_PATH/usr/bin/titan-edge" ./titan-edge
+            fi
+        fi
+
+        if [ ! -f "./titan-edge" ]; then
+            echo -e "${RED}Ошибка: titan-edge отсутствует!${NC}"
+            docker logs "$CONTAINER_ID"
+            docker rm -f "$CONTAINER_ID"
+            exit 1
+        fi
+    }
+
+    chmod +x ./titan-edge
+    docker rm -f "$CONTAINER_ID"
+
+    echo -e "${GREEN}[✓] Библиотеки и бинарники успешно извлечены!${NC}"
+}
+
+###############################################################################
+# (4) Создание/запуск ноды
 ###############################################################################
 setup_nodes() {
-    # Проверяем, установлен ли Docker
-    if ! command -v docker &>/dev/null; then
-        echo -e "${RED}[✗] Ошибка: Docker не установлен!${NC}"
-        echo -e "${ORANGE}[*] Установите компоненты (1) перед запуском нод.${NC}"
-        sleep 3
-        return
-    fi
-
     echo -e "${ORANGE}[*] Укажите количество нод, которые хотите создать:${NC}"
     while true; do
         read -p "Сколько нод создать? (1-100): " NODE_COUNT
@@ -284,7 +212,7 @@ setup_nodes() {
 }
 
 ###############################################################################
-# (7) Запуск контейнера с учетом спуфинга
+# (5) Запуск контейнера с учетом спуфинга
 ###############################################################################
 create_node() {
     local idx="$1"
@@ -342,7 +270,7 @@ create_node() {
 }
 
 ###############################################################################
-# (8) Проверка статуса
+# (6) Проверка статуса
 ###############################################################################
 check_status() {
     clear
@@ -383,7 +311,7 @@ check_status() {
 }
 
 ###############################################################################
-# (9) Логи (последние 5 строк) всех нод
+# (7) Логи (последние 5 строк) всех нод
 ###############################################################################
 show_logs() {
     clear
@@ -407,7 +335,7 @@ show_logs() {
 }
 
 ###############################################################################
-# (10) Перезапуск, Очистка, автозапуск
+# (8) Перезапуск, Очистка, автозапуск
 ###############################################################################
 restart_nodes() {
     echo -e "${ORANGE}[*] Перезапуск нод...${NC}"
