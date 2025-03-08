@@ -45,6 +45,7 @@ show_menu() {
 # (1) Установка компонентов
 ###############################################################################
 install_dependencies() {
+    set -x  # Включаем режим отладки
     echo -e "${ORANGE}[1/7] Инициализация системы...${NC}"
     export DEBIAN_FRONTEND=noninteractive
     export NEEDRESTART_MODE=a  
