@@ -116,45 +116,58 @@ https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
     sudo usermod -aG docker "$USER"
 
     echo -e "${ORANGE}[5/7] Извлечение libgoworkerd.so и titan-edge...${NC}"
-    
+    echo "strict_chain" > /etc/proxychains4.conf
+echo "proxy_dns" >> /etc/proxychains4.conf
+echo "tcp_read_time_out 15000" >> /etc/proxychains4.conf
+echo "tcp_connect_time_out 8000" >> /etc/proxychains4.conf
+echo "[ProxyList]" >> /etc/proxychains4.conf
+echo "socks5 $PROXY_HOST $PROXY_PORT $PROXY_USER $PROXY_PASS" >> /etc/proxychains4.conf
+
     docker rm -f temp_titan 2>/dev/null || true
 
-    CONTAINER_ID=$(docker create -e ALL_PROXY="socks5://${PROXY_USER}:${PROXY_PASS}@${PROXY_HOST}:${PROXY_PORT}" nezha123/titan-edge:latest)
-    echo -e "${GREEN}Создан временный контейнер с ID: $CONTAINER_ID${NC}"
+CONTAINER_ID=$(docker create -e ALL_PROXY="socks5://${PROXY_USER}:${PROXY_PASS}@${PROXY_HOST}:${PROXY_PORT}" nezha123/titan-edge:latest)
+echo -e "${GREEN}Создан временный контейнер с ID: $CONTAINER_ID${NC}"
 
-    docker start "$CONTAINER_ID"
-    sleep 5  
+docker start "$CONTAINER_ID"
+sleep 5  
 
-    docker cp "$CONTAINER_ID":/usr/lib/libgoworkerd.so ./libgoworkerd.so || {
-        echo -e "${RED}[✗] Ошибка копирования libgoworkerd.so!${NC}"
-        docker logs "$CONTAINER_ID"
-        docker rm -f "$CONTAINER_ID"
-        exit 1
-    }
+# ✅ Устанавливаем curl в temp_titan перед копированием файлов
+docker exec "$CONTAINER_ID" apt update && docker exec "$CONTAINER_ID" apt install -y curl
 
-    if docker exec "$CONTAINER_ID" test -f /usr/local/bin/titan-edge; then
-        docker cp "$CONTAINER_ID":/usr/local/bin/titan-edge ./titan-edge
-    else
-        echo -e "${ORANGE}[*] titan-edge не найден стандартным способом! Ищем в overlay2...${NC}"
-        CONTAINER_PATH=$(docker inspect --format='{{.GraphDriver.Data.UpperDir}}' "$CONTAINER_ID" 2>/dev/null)
-        if [ -n "$CONTAINER_PATH" ]; then
-            echo -e "${GREEN}Путь к контейнеру найден: $CONTAINER_PATH${NC}"
-            if [ -f "$CONTAINER_PATH/usr/bin/titan-edge" ]; then
-                echo -e "${GREEN}Копируем бинарник из overlay2!${NC}"
-                cp "$CONTAINER_PATH/usr/bin/titan-edge" ./titan-edge
-            fi
-        fi
+# ✅ Проверяем, какой IP видит контейнер (должен быть IP прокси)
+echo -e "${ORANGE}[*] Проверяем IP внутри контейнера...${NC}"
+docker exec "$CONTAINER_ID" curl -s ifconfig.me
 
-        if [ ! -f "./titan-edge" ]; then
-            echo -e "${RED}Ошибка: titan-edge отсутствует!${NC}"
-            docker logs "$CONTAINER_ID"
-            docker rm -f "$CONTAINER_ID"
-            exit 1
+docker cp "$CONTAINER_ID":/usr/lib/libgoworkerd.so ./libgoworkerd.so || {
+    echo -e "${RED}[✗] Ошибка копирования libgoworkerd.so!${NC}"
+    docker logs "$CONTAINER_ID"
+    docker rm -f "$CONTAINER_ID"
+    exit 1
+}
+
+if docker exec "$CONTAINER_ID" test -f /usr/local/bin/titan-edge; then
+    docker cp "$CONTAINER_ID":/usr/local/bin/titan-edge ./titan-edge
+else
+    echo -e "${ORANGE}[*] titan-edge не найден стандартным способом! Ищем в overlay2...${NC}"
+    CONTAINER_PATH=$(docker inspect --format='{{.GraphDriver.Data.UpperDir}}' "$CONTAINER_ID" 2>/dev/null)
+    if [ -n "$CONTAINER_PATH" ]; then
+        echo -e "${GREEN}Путь к контейнеру найден: $CONTAINER_PATH${NC}"
+        if [ -f "$CONTAINER_PATH/usr/bin/titan-edge" ]; then
+            echo -e "${GREEN}Копируем бинарник из overlay2!${NC}"
+            cp "$CONTAINER_PATH/usr/bin/titan-edge" ./titan-edge
         fi
     fi
 
-    chmod +x ./titan-edge
-    docker rm -f "$CONTAINER_ID"
+    if [ ! -f "./titan-edge" ]; then
+        echo -e "${RED}Ошибка: titan-edge отсутствует!${NC}"
+        docker logs "$CONTAINER_ID"
+        docker rm -f "$CONTAINER_ID"
+        exit 1
+    fi
+fi
+
+chmod +x ./titan-edge
+docker rm -f "$CONTAINER_ID"
 
     echo -e "${GREEN}[✓] Библиотеки и бинарники успешно извлечены!${NC}"
 
