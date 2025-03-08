@@ -126,6 +126,10 @@ RUN apt update && \
     echo "tcp_read_time_out 15000" >> /etc/proxychains4.conf && \
     echo "tcp_connect_time_out 8000" >> /etc/proxychains4.conf && \
     echo "[ProxyList]" >> /etc/proxychains4.conf && \
+    if [[ -z "$PROXY_HOST" || -z "$PROXY_PORT" || -z "$PROXY_USER" || -z "$PROXY_PASS" ]]; then \
+        echo "[ERROR] Прокси-переменные не заданы!"; \
+        exit 1; \
+    fi && \
     echo "socks5 $PROXY_HOST $PROXY_PORT $PROXY_USER $PROXY_PASS" >> /etc/proxychains4.conf
 EOF
 
