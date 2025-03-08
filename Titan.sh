@@ -116,6 +116,9 @@ ENV PROXY_PORT=${proxy_port}
 ENV PROXY_USER=${proxy_user}
 ENV PROXY_PASS=${proxy_pass}
 
+# Устанавливаем переменные окружения для прокси
+ENV ALL_PROXY="socks5://${PROXY_USER}:${PROXY_PASS}@${PROXY_HOST}:${PROXY_PORT}"
+
 RUN apt update && \
     DEBIAN_FRONTEND=noninteractive apt install -y proxychains4 curl && \
     echo "strict_chain" > /etc/proxychains4.conf && \
