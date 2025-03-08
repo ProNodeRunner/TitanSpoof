@@ -95,26 +95,39 @@ fi
 echo -e "${ORANGE}[6/7] Сборка Docker-образа Titan+ProxyChains...${NC}"
 
 # Создаём Dockerfile для кастомного образа
-echo ">>> DEBUG: Создаём Dockerfile.titan"
-
 cat > Dockerfile.titan <<EOF
+# Базовый образ
 FROM docker.io/library/ubuntu:22.04
 
+# Копируем необходимые файлы
 COPY libgoworkerd.so /usr/lib/libgoworkerd.so
 COPY titan-edge /usr/local/bin/titan-edge
 
+# Обновляем динамические библиотеки и делаем бинарник titan-edge исполняемым
 RUN ldconfig
 RUN chmod +x /usr/local/bin/titan-edge && ln -s /usr/local/bin/titan-edge /usr/bin/titan-edge
 
-# Теперь переменные задаём при запуске контейнера, а не на этапе сборки
-ENV ALL_PROXY="socks5://${PROXY_USER}:${PROXY_PASS}@${PROXY_HOST}:${PROXY_PORT}"
-
+# Установка необходимых пакетов и настройка proxychains4
 RUN apt update && \
     DEBIAN_FRONTEND=noninteractive apt install -y proxychains4 curl && \
     echo "strict_chain" > /etc/proxychains4.conf && \
     echo "proxy_dns" >> /etc/proxychains4.conf && \
     echo "tcp_read_time_out 15000" >> /etc/proxychains4.conf && \
-    echo "tcp_connect_time_out 8000" >> /etc/proxychains4.conf
+    echo "tcp_connect_time_out 8000" >> /etc/proxychains4.conf && \
+    echo "[ProxyList]" >> /etc/proxychains4.conf
+
+# Переменные окружения для прокси (будут передаваться при запуске контейнера)
+ENV PROXY_HOST=""
+ENV PROXY_PORT=""
+ENV PROXY_USER=""
+ENV PROXY_PASS=""
+ENV ALL_PROXY=""
+
+# Запуск контейнера с корректной настройкой прокси перед titan-edge
+CMD ["sh", "-c", \
+    "echo 'socks5 ${PROXY_HOST} ${PROXY_PORT} ${PROXY_USER} ${PROXY_PASS}' >> /etc/proxychains4.conf && \
+    export ALL_PROXY=socks5://${PROXY_USER}:${PROXY_PASS}@${PROXY_HOST}:${PROXY_PORT} && \
+    proxychains4 /usr/bin/titan-edge daemon start --init --url=https://cassini-locator.titannet.io:5000/rpc/v0"]
 EOF
 
 # Собираем кастомный образ
