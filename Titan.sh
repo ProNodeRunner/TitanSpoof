@@ -58,11 +58,23 @@ install_dependencies() {
 
     sudo apt-get update -yq && sudo apt-get upgrade -yq
 
-    echo -e "${ORANGE}[2/7] Установка пакетов...${NC}"
-    sudo apt-get install -yq \
-        apt-transport-https ca-certificates curl gnupg lsb-release \
-        jq screen cgroup-tools net-tools ccze netcat iptables-persistent bc \
-        ufw git build-essential proxychains4 needrestart
+    echo -e "${ORANGE}[2/7] Установка пакетов и Docker...${NC}"
+sudo apt-get install -yq \
+    apt-transport-https ca-certificates curl gnupg lsb-release jq \
+    screen cgroup-tools net-tools ccze netcat iptables-persistent bc \
+    ufw git build-essential proxychains4 needrestart
+
+# Добавляем репозиторий Docker
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+echo "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+sudo apt-get update -yq
+sudo apt-get install -yq docker-ce docker-ce-cli containerd.io
+
+# Запускаем и добавляем Docker в автозапуск
+sudo systemctl start docker
+sudo systemctl enable docker
+
 
     sudo sed -i 's/#\$nrconf{restart} = "i"/\$nrconf{restart} = "a"/' /etc/needrestart/needrestart.conf
 
