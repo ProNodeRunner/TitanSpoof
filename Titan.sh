@@ -44,9 +44,6 @@ show_menu() {
 ###############################################################################
 # (1) Установка компонентов
 ###############################################################################
-###############################################################################
-# (1) Установка компонентов
-###############################################################################
 install_dependencies() {
     set -x  # Включаем режим отладки
     echo -e "${ORANGE}[1/7] Инициализация системы...${NC}"
@@ -89,43 +86,41 @@ install_dependencies() {
     sudo systemctl start docker
     sudo systemctl enable docker
 
+    # Убираем лишний вопрос о перезапуске служб
     sudo sed -i 's/#\$nrconf{restart} = "i"/\$nrconf{restart} = "a"/' /etc/needrestart/needrestart.conf
 
     echo -e "${GREEN}[✓] Docker установлен и работает!${NC}"
-}
 
-    sudo sed -i 's/#\$nrconf{restart} = "i"/\$nrconf{restart} = "a"/' /etc/needrestart/needrestart.conf
+    echo -e "${ORANGE}[2.5/7] Настройка proxychains4...${NC}"
+    echo -e "${ORANGE}[*] Введите SOCKS5-прокси для установки (формат: host:port:user:pass):${NC}"
 
-echo -e "${ORANGE}[2.5/7] Настройка proxychains4...${NC}"
-echo -e "${ORANGE}[*] Введите SOCKS5-прокси для установки (формат: host:port:user:pass):${NC}"
+    while true; do
+        # Обнуляем переменные перед каждой попыткой
+        PROXY_HOST=""
+        PROXY_PORT=""
+        PROXY_USER=""
+        PROXY_PASS=""
 
-while true; do
-    # Обнуляем переменные перед каждой попыткой
-    PROXY_HOST=""
-    PROXY_PORT=""
-    PROXY_USER=""
-    PROXY_PASS=""
+        echo -ne "${ORANGE}Введите SOCKS5-прокси для установки: ${NC}"
+        read PROXY_INPUT
 
-    echo -ne "${ORANGE}Введите SOCKS5-прокси для установки: ${NC}"
-    read PROXY_INPUT
+        # Логируем ввод пользователя
+        echo -e "${GREEN}[*] Введённый прокси: ${PROXY_INPUT}${NC}"
 
-    # Логируем ввод пользователя
-    echo -e "${GREEN}[*] Введённый прокси: ${PROXY_INPUT}${NC}"
+        # Разбиваем строку на переменные
+        IFS=':' read -r PROXY_HOST PROXY_PORT PROXY_USER PROXY_PASS <<< "$PROXY_INPUT"
 
-    # Разбиваем строку на переменные
-    IFS=':' read -r PROXY_HOST PROXY_PORT PROXY_USER PROXY_PASS <<< "$PROXY_INPUT"
+        # Проверяем, что все переменные заполнены
+        if [[ -z "$PROXY_HOST" || -z "$PROXY_PORT" || -z "$PROXY_USER" || -z "$PROXY_PASS" ]]; then
+            echo -e "${RED}[!] Некорректный формат! Пример: 1.2.3.4:1080:user:pass${NC}"
+            continue
+        fi
 
-    # Проверяем, что все переменные заполнены
-    if [[ -z "$PROXY_HOST" || -z "$PROXY_PORT" || -z "$PROXY_USER" || -z "$PROXY_PASS" ]]; then
-        echo -e "${RED}[!] Некорректный формат! Пример: 1.2.3.4:1080:user:pass${NC}"
-        continue
-    fi
+        # Логируем разбор прокси
+        echo -e "${GREEN}[*] Проверяем прокси: socks5://${PROXY_USER}:${PROXY_PASS}@${PROXY_HOST}:${PROXY_PORT}${NC}"
 
-    # Логируем разбор прокси
-    echo -e "${GREEN}[*] Проверяем прокси: socks5://${PROXY_USER}:${PROXY_PASS}@${PROXY_HOST}:${PROXY_PORT}${NC}"
-
-    # Создаём конфиг proxychains4
-    cat > /etc/proxychains4.conf <<EOL
+        # Создаём конфиг proxychains4
+        cat > /etc/proxychains4.conf <<EOL
 strict_chain
 proxy_dns
 tcp_read_time_out 15000
@@ -134,36 +129,42 @@ tcp_connect_time_out 8000
 socks5 $PROXY_HOST $PROXY_PORT $PROXY_USER $PROXY_PASS
 EOL
 
-    # Проверяем, записался ли конфиг proxychains4
-    if [ ! -f "/etc/proxychains4.conf" ]; then
-        echo -e "${RED}[!] Ошибка: proxychains4.conf не записался!${NC}"
-        continue
-    fi
-    echo -e "${GREEN}[✓] Конфигурация proxychains4 записана!${NC}"
+        # Проверяем, записался ли конфиг proxychains4
+        if [ ! -f "/etc/proxychains4.conf" ]; then
+            echo -e "${RED}[!] Ошибка: proxychains4.conf не записался!${NC}"
+            continue
+        fi
+        echo -e "${GREEN}[✓] Конфигурация proxychains4 записана!${NC}"
 
-    # Проверяем, работает ли proxychains4 перед тестом прокси
-    echo -e "${ORANGE}[*] Тестируем `proxychains4` перед проверкой прокси...${NC}"
-    proxychains4 -q curl -s --connect-timeout 3 https://api.ipify.org
-    if [[ $? -ne 0 ]]; then
-        echo -e "${RED}[!] Ошибка: proxychains4 не работает, попробуйте другой прокси!${NC}"
-        continue
-    fi
+        # Проверяем, работает ли `proxychains4`
+        echo -e "${ORANGE}[*] Проверяем работоспособность proxychains4...${NC}"
+        if ! command -v proxychains4 &>/dev/null; then
+            echo -e "${RED}[!] Ошибка: proxychains4 не найден!${NC}"
+            continue
+        fi
 
-    # Тестируем соединение через прокси
-    PROXY_TEST=$(curl --proxy "socks5://${PROXY_USER}:${PROXY_PASS}@${PROXY_HOST}:${PROXY_PORT}" -s --connect-timeout 5 https://api.ipify.org)
+        # Проверяем соединение через proxychains4
+        echo -e "${ORANGE}[*] Тестируем `proxychains4` перед проверкой прокси...${NC}"
+        proxychains4 -q curl -s --connect-timeout 3 https://api.ipify.org
+        if [[ $? -ne 0 ]]; then
+            echo -e "${RED}[!] Ошибка: proxychains4 не работает! Попробуйте другой прокси.${NC}"
+            continue
+        fi
 
-    if [[ -n "$PROXY_TEST" ]]; then
-        echo -e "${GREEN}[✓] Прокси успешно подключен! IP: $PROXY_TEST${NC}"
-        break
-    else
-        echo -e "${RED}[✗] Прокси не работает! Полный вывод ошибки:${NC}"
-        curl --proxy "socks5://${PROXY_USER}:${PROXY_PASS}@${PROXY_HOST}:${PROXY_PORT}" -v --connect-timeout 5 https://api.ipify.org
-        echo -e "${RED}[!] Попробуйте ввести другой прокси.${NC}"
-    fi
-done
+        # Тестируем соединение через прокси
+        PROXY_TEST=$(curl --proxy "socks5://${PROXY_USER}:${PROXY_PASS}@${PROXY_HOST}:${PROXY_PORT}" -s --connect-timeout 5 https://api.ipify.org)
 
-echo -e "${GREEN}[✓] Proxychains4 настроен!${NC}"
+        if [[ -n "$PROXY_TEST" ]]; then
+            echo -e "${GREEN}[✓] Прокси успешно подключен! IP: $PROXY_TEST${NC}"
+            break
+        else
+            echo -e "${RED}[✗] Прокси не работает! Полный вывод ошибки:${NC}"
+            curl --proxy "socks5://${PROXY_USER}:${PROXY_PASS}@${PROXY_HOST}:${PROXY_PORT}" -v --connect-timeout 5 https://api.ipify.org
+            echo -e "${RED}[!] Попробуйте ввести другой прокси.${NC}"
+        fi
+    done
 
+    echo -e "${GREEN}[✓] Proxychains4 настроен!${NC}"
 
     echo -e "${ORANGE}[3/7] Настройка брандмауэра...${NC}"
     sudo ufw allow 30000:40000/udp || true
