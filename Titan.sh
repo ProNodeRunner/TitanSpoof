@@ -53,6 +53,9 @@ install_dependencies() {
     sudo bash -c "echo 'iptables-persistent iptables-persistent/autosave_v6 boolean false' | debconf-set-selections"
     echo 'debconf debconf/frontend select Noninteractive' | sudo debconf-set-selections  # Полностью отключаем debconf
 
+    sudo systemctl stop unattended-upgrades
+    sudo systemctl disable unattended-upgrades || true
+
     sudo apt-get update -yq && sudo apt-get upgrade -yq
 
     echo -e "${ORANGE}[2/7] Установка пакетов...${NC}"
@@ -112,9 +115,11 @@ https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
         exit 1
     }
 
-    docker cp "$CONTAINER_ID":/usr/local/bin/titan-edge ./titan-edge || {
-        echo -e "${RED}[✗] Ошибка копирования titan-edge!${NC}"
-        echo -e "${ORANGE}Пробуем найти titan-edge вручную...${NC}"
+    # Проверяем существование бинарника внутри контейнера перед копированием
+    if docker exec "$CONTAINER_ID" test -f /usr/local/bin/titan-edge; then
+        docker cp "$CONTAINER_ID":/usr/local/bin/titan-edge ./titan-edge
+    else
+        echo -e "${ORANGE}[*] titan-edge не найден стандартным способом! Ищем в overlay2...${NC}"
 
         CONTAINER_PATH=$(docker inspect --format='{{.GraphDriver.Data.UpperDir}}' "$CONTAINER_ID" 2>/dev/null)
         if [ -n "$CONTAINER_PATH" ]; then
@@ -130,7 +135,7 @@ https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
             docker rm -f "$CONTAINER_ID"
             exit 1
         fi
-    }
+    fi
 
     chmod +x ./titan-edge
     docker rm -f "$CONTAINER_ID"
