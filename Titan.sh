@@ -106,18 +106,38 @@ if [ ! -f "./libgoworkerd.so" ] || [ ! -f "./titan-edge" ]; then
     # Копируем libgoworkerd.so
     docker cp titanextract:/usr/lib/libgoworkerd.so ./libgoworkerd.so
 
-    # Поиск точного пути к titan-edge
     echo -e "${ORANGE}[*] Поиск бинарника titan-edge внутри контейнера...${NC}"
+    
+    # Пробуем найти `titan-edge` в контейнере
     BINARY_PATH=$(docker exec titanextract find / -type f -name "titan-edge" 2>/dev/null | grep -E '/titan-edge$' | head -n1)
 
     if [ -z "$BINARY_PATH" ]; then
-        echo -e "${RED}Ошибка: Не удалось найти бинарник titan-edge в контейнере!${NC}"
-        docker rm -f titanextract
-        exit 1
+        echo -e "${RED}[*] titan-edge не найден стандартным способом! Ищем в /var/lib/docker/overlay2/...${NC}"
+        
+        # Находим путь в overlay2
+        CONTAINER_ID=$(docker inspect --format='{{.GraphDriver.Data.UpperDir}}' titanextract 2>/dev/null)
+
+        if [ -z "$CONTAINER_ID" ]; then
+            echo -e "${RED}Ошибка: Не удалось определить путь контейнера в overlay2!${NC}"
+            docker rm -f titanextract
+            exit 1
+        fi
+
+        BINARY_PATH="$CONTAINER_ID/usr/bin/titan-edge"
+
+        if [ ! -f "$BINARY_PATH" ]; then
+            echo -e "${RED}Ошибка: Файл titan-edge отсутствует даже в overlay2!${NC}"
+            docker rm -f titanextract
+            exit 1
+        fi
+
+        echo -e "${GREEN}[*] Найден путь: $BINARY_PATH${NC}"
+        cp "$BINARY_PATH" ./titan-edge
+    else
+        echo -e "${GREEN}[*] Найден бинарник в контейнере: $BINARY_PATH${NC}"
+        docker cp titanextract:"$BINARY_PATH" ./titan-edge
     fi
 
-    # Копируем бинарник из контейнера
-    docker cp titanextract:"$BINARY_PATH" ./titan-edge
     docker rm -f titanextract
 
     if [ ! -f "./libgoworkerd.so" ] || [ ! -f "./titan-edge" ]; then
