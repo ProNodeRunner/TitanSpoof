@@ -55,11 +55,9 @@ install_dependencies() {
 
     echo -e "${ORANGE}[2/7] Инициализация системы...${NC}"
     
-    # Отключаем все запросы debconf
     export DEBIAN_FRONTEND=noninteractive
     export DEBCONF_NONINTERACTIVE_SEEN=true
 
-    # Автоматически сохраняем iptables без вопросов
     echo iptables-persistent iptables-persistent/autosave_v4 boolean true | sudo debconf-set-selections
     echo iptables-persistent iptables-persistent/autosave_v6 boolean true | sudo debconf-set-selections
 
@@ -94,11 +92,11 @@ https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
 
     echo -e "${ORANGE}[6/7] Проверка наличия libgoworkerd.so...${NC}"
     if [ ! -f "./libgoworkerd.so" ]; then
-        echo -e "${ORANGE}Извлекаем libgoworkerd.so из официального образа...${NC}"
+        echo -e "${ORANGE}Извлекаем libgoworkerd.so из кастомного образа...${NC}"
 
-        docker pull nezha123/titan-edge || { echo -e "${RED}Ошибка: Не удалось скачать образ titan-edge!${NC}"; exit 1; }
+        docker pull mytitan/proxy-titan-edge-custom || { echo -e "${RED}Ошибка: Не удалось скачать кастомный образ!${NC}"; exit 1; }
 
-        docker create --name titanextract nezha123/titan-edge
+        docker create --name titanextract mytitan/proxy-titan-edge-custom
         docker cp titanextract:/usr/lib/libgoworkerd.so ./libgoworkerd.so
         docker rm -f titanextract
 
@@ -110,17 +108,13 @@ https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
 
     echo -e "${ORANGE}[6.5/7] Проверка наличия titan-edge...${NC}"
     if [ ! -f "./titan-edge" ]; then
-        echo -e "${ORANGE}Извлекаем titan-edge из официального образа...${NC}"
+        echo -e "${ORANGE}Извлекаем titan-edge из кастомного образа...${NC}"
 
-        docker create --name titanextract nezha123/titan-edge
+        docker create --name titanextract mytitan/proxy-titan-edge-custom
         docker start titanextract
         sleep 3
 
-        # Проверяем путь к бинарнику titan-edge
         echo -e "${ORANGE}[*] Поиск бинарника titan-edge внутри контейнера...${NC}"
-        docker exec titanextract find / -name "titan-edge" 2>/dev/null
-
-        # Если бинарник найден в другом месте, меняем путь
         BINARY_PATH=$(docker exec titanextract find / -name "titan-edge" 2>/dev/null | head -n1)
         
         if [ -z "$BINARY_PATH" ]; then
