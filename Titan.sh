@@ -235,17 +235,53 @@ generate_fake_mac() {
 setup_proxychains_and_build() {
     echo -e "${ORANGE}[3/7] Настройка proxychains4 и создание кастомного контейнера...${NC}"
 
-    # Проверяем, нужно ли использовать прокси
-    read -p "Введите SOCKS5-прокси (формат: host:port:user:pass): " PROXY_INPUT
-    IFS=':' read -r PROXY_HOST PROXY_PORT PROXY_USER PROXY_PASS <<< "$PROXY_INPUT"
-
-    if [[ -z "$PROXY_HOST" || -z "$PROXY_PORT" || -z "$PROXY_USER" || -z "$PROXY_PASS" ]]; then
-        echo -e "${RED}[✗] Ошибка: Неправильный формат прокси!${NC}"
-        exit 1
+    # Проверяем, установлен ли proxychains4
+    if ! command -v proxychains4 &>/dev/null; then
+        echo -e "${RED}[!] Ошибка: proxychains4 не установлен! Устанавливаем...${NC}"
+        sudo apt-get install -y proxychains4
     fi
 
+    # Настройка прокси
+    while true; do
+        echo -ne "${ORANGE}Введите SOCKS5-прокси (формат: host:port:user:pass): ${NC}"
+        read PROXY_INPUT
+
+        # Проверка пустого ввода
+        if [[ -z "$PROXY_INPUT" ]]; then
+            echo -e "${RED}[!] Ошибка: Ввод не должен быть пустым. Попробуйте снова.${NC}"
+            continue
+        fi
+
+        # Разбиваем ввод на переменные
+        IFS=':' read -r PROXY_HOST PROXY_PORT PROXY_USER PROXY_PASS <<< "$PROXY_INPUT"
+
+        # Проверяем, корректно ли переданы параметры
+        if [[ -z "$PROXY_HOST" || -z "$PROXY_PORT" || -z "$PROXY_USER" || -z "$PROXY_PASS" ]]; then
+            echo -e "${RED}[!] Ошибка: Некорректный формат! Пример: 1.2.3.4:1080:user:pass${NC}"
+            continue
+        fi
+
+        # Проверяем, что порт является числом
+        if ! [[ "$PROXY_PORT" =~ ^[0-9]+$ ]]; then
+            echo -e "${RED}[!] Ошибка: Порт должен быть числом!${NC}"
+            continue
+        fi
+
+        # Проверяем доступность прокси
+        echo -e "${GREEN}[*] Проверяем прокси: socks5://${PROXY_USER}:${PROXY_PASS}@${PROXY_HOST}:${PROXY_PORT}${NC}"
+        PROXY_TEST=$(curl --proxy "socks5://${PROXY_USER}:${PROXY_PASS}@${PROXY_HOST}:${PROXY_PORT}" -s --connect-timeout 5 https://api.ipify.org)
+
+        if [[ -n "$PROXY_TEST" ]]; then
+            echo -e "${GREEN}[✓] Прокси успешно подключен! IP: $PROXY_TEST${NC}"
+            break  # Выход из цикла, если прокси рабочий
+        else
+            echo -e "${RED}[✗] Прокси не работает! Попробуйте другой прокси.${NC}"
+        fi
+    done
+
     # Создаём конфиг proxychains4
-    cat > proxychains4.conf <<EOL
+    echo -e "${GREEN}[✓] Записываем конфигурацию proxychains4...${NC}"
+    sudo tee /etc/proxychains4.conf > /dev/null <<EOL
 strict_chain
 proxy_dns
 tcp_read_time_out 15000
@@ -254,10 +290,25 @@ tcp_connect_time_out 8000
 socks5 $PROXY_HOST $PROXY_PORT $PROXY_USER $PROXY_PASS
 EOL
 
+    # Проверяем, записался ли конфиг
+    if [ ! -f "/etc/proxychains4.conf" ]; then
+        echo -e "${RED}[!] Ошибка: proxychains4.conf не записался!${NC}"
+        exit 1
+    fi
+
     echo -e "${GREEN}[✓] Proxychains4 настроен!${NC}"
 
+    # ✅ Проверяем работоспособность proxychains4
+    echo -e "${ORANGE}[*] Проверяем работоспособность proxychains4...${NC}"
+    proxychains4 -q curl -s --connect-timeout 3 https://api.ipify.org
+    if [[ $? -ne 0 ]]; then
+        echo -e "${RED}[!] Ошибка: proxychains4 не работает! Попробуйте другой прокси.${NC}"
+        exit 1
+    fi
+
     # ✅ Создаём Dockerfile для кастомного контейнера
-    cat > Dockerfile <<EOF
+    echo -e "${ORANGE}[*] Генерируем Dockerfile...${NC}"
+    sudo tee Dockerfile > /dev/null <<EOF
 FROM ubuntu:22.04
 COPY titan-edge /usr/bin/titan-edge
 COPY libgoworkerd.so /usr/lib/libgoworkerd.so
@@ -271,11 +322,18 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 EOF
 
-    echo "COPY proxychains4.conf /etc/proxychains4.conf" >> Dockerfile
+    # ✅ Добавляем конфигурацию proxychains в контейнер
+    echo "COPY /etc/proxychains4.conf /etc/proxychains4.conf" | sudo tee -a Dockerfile > /dev/null
 
     # ✅ Собираем кастомный контейнер
+    echo -e "${ORANGE}[*] Собираем кастомный Docker-контейнер...${NC}"
     docker build -t mytitan/proxy-titan-edge .
-    echo -e "${GREEN}[✓] Кастомный контейнер собран!${NC}"
+    if [[ $? -ne 0 ]]; then
+        echo -e "${RED}[!] Ошибка: Не удалось собрать контейнер!${NC}"
+        exit 1
+    fi
+
+    echo -e "${GREEN}[✓] Кастомный контейнер собран успешно!${NC}"
 }
 
 ###############################################################################
