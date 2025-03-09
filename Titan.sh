@@ -82,79 +82,6 @@ install_dependencies() {
         fi
     done
 
-    # === Настройка NAT (если требуется) ===
-    echo -e "${ORANGE}[1.1/7] Настройка NAT (если необходимо)...${NC}"
-    if iptables -t nat -L -n | grep -q "MASQUERADE"; then
-        echo -e "${GREEN}[✓] NAT уже настроен.${NC}"
-    else
-        echo -e "${ORANGE}[*] Включение NAT-маскарадинга...${NC}"
-        sudo iptables -t nat -A POSTROUTING -o "$(ip route | grep default | awk '{print $5}')" -j MASQUERADE
-        sudo iptables-save > /etc/iptables/rules.v4
-        echo -e "${GREEN}[✓] NAT-маскарадинг включен.${NC}"
-    fi
-
-    # === Отключение ненужных автообновлений ===
-    echo -e "${ORANGE}[1.2/7] Отключение автообновлений...${NC}"
-    sudo systemctl stop unattended-upgrades
-    sudo systemctl disable unattended-upgrades || true
-
-    # === Обновление системы и установка пакетов ===
-    echo -e "${ORANGE}[2/7] Установка пакетов...${NC}"
-    sudo apt-get update -yq && sudo apt-get upgrade -yq
-    sudo apt-get install -yq \
-        apt-transport-https ca-certificates curl gnupg lsb-release jq \
-        screen cgroup-tools net-tools ccze netcat iptables-persistent bc \
-        ufw git build-essential proxychains4 needrestart
-
-    # === Установка и запуск Docker ===
-    echo -e "${ORANGE}[2.3/7] Установка Docker...${NC}"
-    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo tee /usr/share/keyrings/docker-archive-keyring.gpg > /dev/null
-    echo "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
-    sudo apt-get update -yq
-    sudo apt-get install -yq docker-ce docker-ce-cli containerd.io
-    sudo systemctl start docker
-    sudo systemctl enable docker
-    echo -e "${GREEN}[✓] Docker установлен и работает!${NC}"
-
-    # === Извлечение Titan Edge из контейнера ===
-    echo -e "${ORANGE}[2.5/7] Извлечение Titan Edge из контейнера...${NC}"
-    
-    # Создаем временный контейнер
-    CONTAINER_ID=$(docker create nezha123/titan-edge)
-    if [[ -z "$CONTAINER_ID" ]]; then
-        echo -e "${RED}[!] Ошибка: не удалось создать контейнер для извлечения Titan Edge!${NC}"
-        exit 1
-    fi
-    echo -e "${GREEN}[*] Создан временный контейнер с ID: ${CONTAINER_ID}${NC}"
-
-    # Копируем бинарник Titan Edge
-    docker cp "$CONTAINER_ID":/usr/bin/titan-edge ./titan-edge
-    if [[ ! -f ./titan-edge ]]; then
-        echo -e "${RED}[!] Ошибка: бинарник titan-edge не найден!${NC}"
-        docker rm -f "$CONTAINER_ID"
-        exit 1
-    fi
-    chmod +x ./titan-edge
-    echo -e "${GREEN}[✓] titan-edge успешно извлечён!${NC}"
-
-    # Копируем библиотеку
-    docker cp "$CONTAINER_ID":/usr/lib/libgoworkerd.so ./libgoworkerd.so
-    if [[ ! -f ./libgoworkerd.so ]]; then
-        echo -e "${RED}[!] Ошибка: библиотека libgoworkerd.so не найдена!${NC}"
-        docker rm -f "$CONTAINER_ID"
-        exit 1
-    fi
-
-    # Перемещаем библиотеку
-    mv ./libgoworkerd.so /usr/lib/
-    chmod 755 /usr/lib/libgoworkerd.so
-    ldconfig
-    echo -e "${GREEN}[✓] libgoworkerd.so успешно извлечена и зарегистрирована!${NC}"
-
-    # Удаляем контейнер
-    docker rm -f "$CONTAINER_ID"
-    echo -e "${GREEN}[✓] Успешное извлечение бинарника и библиотеки!${NC}"
-
     # === Запись конфигурации proxychains4 ===
     echo -e "${GREEN}[✓] Записываем конфигурацию proxychains4...${NC}"
     sudo tee /etc/proxychains4.conf > /dev/null <<EOL
@@ -166,13 +93,16 @@ tcp_connect_time_out 8000
 socks5 $PROXY_HOST $PROXY_PORT $PROXY_USER $PROXY_PASS
 EOL
 
+    # Копируем конфиг в текущую директорию перед вызовом setup_proxychains_and_build
+    cp /etc/proxychains4.conf ./proxychains4.conf
+
     # Проверяем, записался ли конфиг
-    if [ ! -f "/etc/proxychains4.conf" ]; then
-        echo -e "${RED}[!] Ошибка: proxychains4.conf не записался!${NC}"
+    if [ ! -f "./proxychains4.conf" ]; then
+        echo -e "${RED}[!] Ошибка: proxychains4.conf не скопировался в текущую директорию!${NC}"
         exit 1
     fi
 
-    echo -e "${GREEN}[✓] Proxychains4 настроен!${NC}"
+    echo -e "${GREEN}[✓] Proxychains4 настроен и скопирован в текущую директорию!${NC}"
 
     # === Проверка работоспособности proxychains4 ===
     echo -e "${ORANGE}[*] Проверяем работоспособность proxychains4...${NC}"
@@ -182,9 +112,11 @@ EOL
         exit 1
     fi
 
-        # *** Вызов функции для создания кастомного контейнера ***
-echo "$PROXY_HOST:$PROXY_PORT:$PROXY_USER:$PROXY_PASS" > /root/proxy_config.txt
-chmod 600 /root/proxy_config.txt  # Устанавливаем права на файл
+    # Сохраняем конфиг прокси для дальнейшего использования
+    echo "$PROXY_HOST:$PROXY_PORT:$PROXY_USER:$PROXY_PASS" > /root/proxy_config.txt
+    chmod 600 /root/proxy_config.txt  # Устанавливаем права на файл
+
+    # Запускаем процесс сборки контейнера
     setup_proxychains_and_build
 }
 
@@ -235,7 +167,7 @@ setup_proxychains_and_build() {
         exit 1
     fi
 
-    # Проверяем, что proxychains4.conf существует
+    # Проверяем, что proxychains4.conf существует в текущей директории
     if [ ! -f "./proxychains4.conf" ]; then
         echo -e "${RED}[!] Ошибка: proxychains4.conf отсутствует!${NC}"
         exit 1
@@ -276,6 +208,7 @@ EOF
 
     echo -e "${GREEN}[✓] Кастомный контейнер собран успешно!${NC}"
 }
+
 
 ###############################################################################
 # (4) Создание/запуск ноды
