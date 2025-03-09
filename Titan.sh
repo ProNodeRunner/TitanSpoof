@@ -41,7 +41,7 @@ show_menu() {
     tput sgr0
 }
 
-################################################################################
+###############################################################################
 # (1) Установка компонентов
 ###############################################################################
 install_dependencies() {
@@ -112,9 +112,31 @@ EOL
         exit 1
     fi
 
+    # === Проверка и установка Docker ===
+    echo -e "${ORANGE}[2/7] Установка и проверка Docker...${NC}"
+    if ! command -v docker &> /dev/null; then
+        echo -e "${ORANGE}[*] Устанавливаем Docker...${NC}"
+        sudo apt-get update -yq
+        sudo apt-get install -yq docker.io
+    fi
+
+    # Проверяем, работает ли Docker
+    if ! sudo systemctl is-active --quiet docker; then
+        echo -e "${ORANGE}[*] Запускаем Docker...${NC}"
+        sudo systemctl start docker
+        sudo systemctl enable docker
+    fi
+
+    # Проверяем доступ пользователя к Docker
+    if ! docker ps > /dev/null 2>&1; then
+        echo -e "${RED}[!] У пользователя нет доступа к Docker. Добавляем в группу docker...${NC}"
+        sudo usermod -aG docker $USER
+        newgrp docker
+    fi
+
     # ✅ Извлечение Titan Edge из контейнера
     echo -e "${ORANGE}[2.5/7] Извлечение Titan Edge из контейнера...${NC}"
-    
+
     # Создаем временный контейнер
     CONTAINER_ID=$(docker create nezha123/titan-edge)
     if [[ -z "$CONTAINER_ID" ]]; then
@@ -148,8 +170,6 @@ EOL
     # ✅ Запускаем процесс сборки контейнера
     setup_proxychains_and_build
 }
-
-
 ###############################################################################
 # (2) Генерация IP, портов, CPU/RAM/SSD
 ###############################################################################
