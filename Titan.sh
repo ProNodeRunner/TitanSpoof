@@ -93,7 +93,7 @@ tcp_connect_time_out 8000
 socks5 $PROXY_HOST $PROXY_PORT $PROXY_USER $PROXY_PASS
 EOL
 
-    # Копируем конфиг в текущую директорию перед вызовом setup_proxychains_and_build
+    # ✅ Копируем конфиг в текущую директорию для Docker
     cp /etc/proxychains4.conf ./proxychains4.conf
 
     # Проверяем, записался ли конфиг
@@ -112,13 +112,14 @@ EOL
         exit 1
     fi
 
-    # Сохраняем конфиг прокси для дальнейшего использования
+    # ✅ Сохраняем конфиг прокси для дальнейшего использования
     echo "$PROXY_HOST:$PROXY_PORT:$PROXY_USER:$PROXY_PASS" > /root/proxy_config.txt
     chmod 600 /root/proxy_config.txt  # Устанавливаем права на файл
 
-    # Запускаем процесс сборки контейнера
+    # ✅ Запускаем процесс сборки контейнера
     setup_proxychains_and_build
 }
+
 
 ###############################################################################
 # (2) Генерация IP, портов, CPU/RAM/SSD
@@ -167,13 +168,13 @@ setup_proxychains_and_build() {
         exit 1
     fi
 
-    # Проверяем, что proxychains4.conf существует в текущей директории
+    # ✅ Проверяем, что proxychains4.conf существует в текущей директории
     if [ ! -f "./proxychains4.conf" ]; then
         echo -e "${RED}[!] Ошибка: proxychains4.conf отсутствует!${NC}"
         exit 1
     fi
 
-    # Проверяем, что файлы бинарников существуют
+    # ✅ Проверяем, что файлы бинарников существуют
     if [ ! -f "./libgoworkerd.so" ] || [ ! -f "./titan-edge" ]; then
         echo -e "${RED}[!] Ошибка: Не найден один из файлов: libgoworkerd.so или titan-edge!${NC}"
         exit 1
