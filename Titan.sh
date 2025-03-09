@@ -213,21 +213,14 @@ EOL
     sudo tee Dockerfile > /dev/null <<EOF
 FROM ubuntu:22.04
 
-# Отключаем интерактивные запросы debconf
-ENV DEBIAN_FRONTEND=noninteractive
-
 COPY titan-edge /usr/bin/titan-edge
 COPY libgoworkerd.so /usr/lib/libgoworkerd.so
 COPY proxychains4.conf /etc/proxychains4.conf
 
 WORKDIR /root/
 
-# Отключаем вопросы dpkg
-RUN apt-get update && apt-get install -y debconf-utils apt-utils \
-    && echo 'debconf debconf/frontend select Noninteractive' | debconf-set-selections \
-    && echo "proxychains4 proxychains4/conf boolean false" | debconf-set-selections
-
-RUN apt-get update && apt-get install -y \
+# Устанавливаем пакеты без лишних вопросов
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y \
     libssl3 \
     ca-certificates \
     proxychains4 \
