@@ -50,38 +50,23 @@ install_dependencies() {
     export DEBIAN_FRONTEND=noninteractive
     export NEEDRESTART_MODE=a  
 
-    # === Настройка NAT ===
-    echo -e "${ORANGE}[1.1/7] Настройка NAT ${NC}"
-    if iptables -t nat -L -n | grep -q "MASQUERADE"; then
-        echo -e "${GREEN}[✓] NAT уже настроен.${NC}"
-    else
-        echo -e "${ORANGE}[*] Включение NAT-маскарадинга...${NC}"
-        sudo iptables -t nat -A POSTROUTING -o "$(ip route | grep default | awk '{print $5}')" -j MASQUERADE
-        sudo iptables-save > /etc/iptables/rules.v4
-        echo -e "${GREEN}[✓] NAT-маскарадинг включен.${NC}"
-    fi
-
     # === Запрос SOCKS5-прокси перед началом установки ===
     while true; do
         echo -ne "${ORANGE}Введите SOCKS5-прокси (формат: host:port:user:pass): ${NC}"
         read PROXY_INPUT
 
-        # Проверка пустого ввода
         if [[ -z "$PROXY_INPUT" ]]; then
             echo -e "${RED}[!] Ошибка: Ввод не должен быть пустым. Попробуйте снова.${NC}"
             continue
         fi
 
-        # Разбираем ввод в переменные
         IFS=':' read -r PROXY_HOST PROXY_PORT PROXY_USER PROXY_PASS <<< "$PROXY_INPUT"
 
-        # Проверяем корректность
         if [[ -z "$PROXY_HOST" || -z "$PROXY_PORT" || -z "$PROXY_USER" || -z "$PROXY_PASS" ]]; then
             echo -e "${RED}[!] Ошибка: Неверный формат! Пример: 1.2.3.4:1080:user:pass${NC}"
             continue
         fi
 
-        # Проверяем работу прокси
         echo -e "${GREEN}[*] Проверяем прокси: socks5://${PROXY_USER}:${PROXY_PASS}@${PROXY_HOST}:${PROXY_PORT}${NC}"
         PROXY_TEST=$(curl --proxy "socks5://${PROXY_USER}:${PROXY_PASS}@${PROXY_HOST}:${PROXY_PORT}" -s --connect-timeout 5 https://api.ipify.org)
 
@@ -93,9 +78,20 @@ install_dependencies() {
         fi
     done
 
-    # ✅ Записываем прокси в файл
+    # ✅ Сохраняем прокси
     echo "$PROXY_HOST:$PROXY_PORT:$PROXY_USER:$PROXY_PASS" > /root/proxy_config.txt
     chmod 600 /root/proxy_config.txt
+
+    # === Настройка NAT ===
+    echo -e "${ORANGE}[1.1/7] Настройка NAT ${NC}"
+    if iptables -t nat -L -n | grep -q "MASQUERADE"; then
+        echo -e "${GREEN}[✓] NAT уже настроен.${NC}"
+    else
+        echo -e "${ORANGE}[*] Включение NAT-маскарадинга...${NC}"
+        sudo iptables -t nat -A POSTROUTING -o "$(ip route | grep default | awk '{print $5}')" -j MASQUERADE
+        sudo netfilter-persistent save >/dev/null 2>&1
+        echo -e "${GREEN}[✓] NAT-маскарадинг включен.${NC}"
+    fi
 
     # === Установка необходимых пакетов ===
     sudo apt-get update -yq && sudo apt-get upgrade -yq
@@ -138,7 +134,6 @@ install_dependencies() {
     # ✅ Запускаем настройку proxychains4 и сборку контейнера
     setup_proxychains_and_build
 }
-
 
 ###############################################################################
 # (2) Генерация IP, портов, CPU/RAM/SSD
@@ -218,16 +213,24 @@ EOL
     sudo tee Dockerfile > /dev/null <<EOF
 FROM ubuntu:22.04
 
+# Отключаем интерактивные запросы debconf
+ENV DEBIAN_FRONTEND=noninteractive
+
 COPY titan-edge /usr/bin/titan-edge
 COPY libgoworkerd.so /usr/lib/libgoworkerd.so
 COPY proxychains4.conf /etc/proxychains4.conf
 
 WORKDIR /root/
 
-RUN apt-get update && apt-get install -y \\
-    libssl3 \\
-    ca-certificates \\
-    proxychains4 \\
+# Отключаем вопросы dpkg
+RUN apt-get update && apt-get install -y debconf-utils apt-utils \
+    && echo 'debconf debconf/frontend select Noninteractive' | debconf-set-selections \
+    && echo "proxychains4 proxychains4/conf boolean false" | debconf-set-selections
+
+RUN apt-get update && apt-get install -y \
+    libssl3 \
+    ca-certificates \
+    proxychains4 \
     && rm -rf /var/lib/apt/lists/*
 
 RUN chmod +x /usr/bin/titan-edge
