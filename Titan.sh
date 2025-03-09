@@ -49,7 +49,7 @@ install_dependencies() {
     export DEBIAN_FRONTEND=noninteractive
     export NEEDRESTART_MODE=a  
 
-    # === 1️⃣ Запрос SOCKS5-прокси перед настройкой NAT ===
+    # === 1️⃣ Запрос SOCKS5-прокси (САМОЕ ПЕРВОЕ, до всего) ===
     while true; do
         echo -ne "${ORANGE}Введите SOCKS5-прокси (формат: host:port:user:pass): ${NC}"
         read PROXY_INPUT
@@ -81,7 +81,7 @@ install_dependencies() {
     echo "$PROXY_HOST:$PROXY_PORT:$PROXY_USER:$PROXY_PASS" > /root/proxy_config.txt
     chmod 600 /root/proxy_config.txt
 
-    # === 2️⃣ Настройка NAT (сразу после запроса прокси) ===
+    # === 2️⃣ Настройка NAT (идёт сразу после запроса прокси) ===
     echo -e "${ORANGE}[1.1/7] Настройка NAT ${NC}"
     if iptables -t nat -L -n | grep -q "MASQUERADE"; then
         echo -e "${GREEN}[✓] NAT уже настроен.${NC}"
