@@ -181,6 +181,13 @@ setup_proxychains_and_build() {
         exit 1
     fi
 
+    # Удаляем старый proxychains4 и конфигурацию
+    echo -e "${ORANGE}[*] Удаляем старую версию proxychains4...${NC}"
+    sudo apt-get remove --purge -y proxychains4 libproxychains4
+    sudo rm -f /etc/proxychains4.conf
+    sudo apt-get autoremove -y
+    sudo apt-get clean
+
     # Настраиваем proxychains4
     echo -e "${GREEN}[✓] Записываем конфигурацию proxychains4...${NC}"
     sudo tee /etc/proxychains4.conf > /dev/null <<EOL
@@ -218,17 +225,16 @@ COPY proxychains4.conf /etc/proxychains4.conf
 
 WORKDIR /root/
 
-# Устанавливаем пакеты без лишних вопросов и проблем с конфигурацией
-RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y \
-    libssl3 \
-    ca-certificates \
-    proxychains4 \
-    tzdata \
-    apt-utils \
-    && rm -rf /var/lib/apt/lists/*
-
-# Автоматически подтверждаем установку proxychains4.conf, чтобы избежать ошибки dpkg
+# Подтверждаем установку proxychains4 перед установкой, чтобы избежать ошибок dpkg
 RUN echo "proxychains4 proxychains4/conf_mode select keep" | debconf-set-selections
+
+# Удаляем старые версии proxychains4 и устанавливаем пакеты без лишних вопросов
+RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get remove --purge -y proxychains4 libproxychains4 && \
+    rm -f /etc/proxychains4.conf && \
+    apt-get autoremove -y && apt-get clean && \
+    apt-get install -y libssl3 ca-certificates proxychains4 tzdata apt-utils && \
+    rm -rf /var/lib/apt/lists/*
 
 RUN chmod +x /usr/bin/titan-edge
 EOF
