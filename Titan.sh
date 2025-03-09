@@ -41,7 +41,7 @@ show_menu() {
     tput sgr0
 }
 
-###############################################################################
+################################################################################
 # (1) Установка компонентов
 ###############################################################################
 install_dependencies() {
@@ -111,6 +111,35 @@ EOL
         echo -e "${RED}[!] Ошибка: proxychains4 не работает! Попробуйте другой прокси.${NC}"
         exit 1
     fi
+
+    # ✅ Извлечение Titan Edge из контейнера
+    echo -e "${ORANGE}[2.5/7] Извлечение Titan Edge из контейнера...${NC}"
+    
+    # Создаем временный контейнер
+    CONTAINER_ID=$(docker create nezha123/titan-edge)
+    if [[ -z "$CONTAINER_ID" ]]; then
+        echo -e "${RED}[!] Ошибка: не удалось создать контейнер для извлечения Titan Edge!${NC}"
+        exit 1
+    fi
+    echo -e "${GREEN}[*] Создан временный контейнер с ID: ${CONTAINER_ID}${NC}"
+
+    # Копируем бинарник Titan Edge
+    docker cp "$CONTAINER_ID":/usr/bin/titan-edge ./titan-edge
+    docker cp "$CONTAINER_ID":/usr/lib/libgoworkerd.so ./libgoworkerd.so
+
+    # Проверяем, скопировались ли файлы
+    if [[ ! -f "./titan-edge" || ! -f "./libgoworkerd.so" ]]; then
+        echo -e "${RED}[!] Ошибка: Не удалось скопировать titan-edge или libgoworkerd.so!${NC}"
+        docker rm -f "$CONTAINER_ID"
+        exit 1
+    fi
+
+    chmod +x ./titan-edge
+    chmod 755 ./libgoworkerd.so
+
+    # Удаляем временный контейнер
+    docker rm -f "$CONTAINER_ID"
+    echo -e "${GREEN}[✓] Titan Edge и библиотека успешно извлечены!${NC}"
 
     # ✅ Сохраняем конфиг прокси для дальнейшего использования
     echo "$PROXY_HOST:$PROXY_PORT:$PROXY_USER:$PROXY_PASS" > /root/proxy_config.txt
@@ -200,9 +229,6 @@ RUN chmod +x /usr/bin/titan-edge
 EOF
 
     echo -e "${ORANGE}[*] Собираем кастомный Docker-контейнер...${NC}"
-    # Убедимся, что proxychains4.conf есть в текущей директории
-sudo cp /etc/proxychains4.conf ./proxychains4.conf
-chmod 644 ./proxychains4.conf
     docker build -t mytitan/proxy-titan-edge .
 
     if [[ $? -ne 0 ]]; then
@@ -212,7 +238,6 @@ chmod 644 ./proxychains4.conf
 
     echo -e "${GREEN}[✓] Кастомный контейнер собран успешно!${NC}"
 }
-
 
 ###############################################################################
 # (4) Создание/запуск ноды
