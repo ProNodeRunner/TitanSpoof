@@ -200,6 +200,9 @@ RUN chmod +x /usr/bin/titan-edge
 EOF
 
     echo -e "${ORANGE}[*] Собираем кастомный Docker-контейнер...${NC}"
+    # Убедимся, что proxychains4.conf есть в текущей директории
+sudo cp /etc/proxychains4.conf ./proxychains4.conf
+chmod 644 ./proxychains4.conf
     docker build -t mytitan/proxy-titan-edge .
 
     if [[ $? -ne 0 ]]; then
