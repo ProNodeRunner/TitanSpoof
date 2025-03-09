@@ -220,8 +220,8 @@ EOL
     fi
 
     # ✅ Генерируем Dockerfile
-    echo -e "${ORANGE}[*] Генерируем Dockerfile...${NC}"
-    sudo tee Dockerfile > /dev/null <<EOF
+echo -e "${ORANGE}[*] Генерируем Dockerfile...${NC}"
+sudo tee Dockerfile > /dev/null <<EOF
 FROM ubuntu:22.04
 
 COPY titan-edge /usr/bin/titan-edge
@@ -238,11 +238,18 @@ RUN apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get remove --purge -y proxychains4 libproxychains4 && \
     rm -f /etc/proxychains4.conf && \
     apt-get autoremove -y && apt-get clean && \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y libssl3 ca-certificates proxychains4 tzdata apt-utils && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y \
+    libssl3 \
+    ca-certificates \
+    proxychains4 \
+    tzdata \
+    apt-utils \
+    curl && \
     rm -rf /var/lib/apt/lists/*
 
 RUN chmod +x /usr/bin/titan-edge
 EOF
+
 
     # ✅ Собираем кастомный контейнер
     echo -e "${ORANGE}[*] Собираем кастомный Docker-контейнер...${NC}"
