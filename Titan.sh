@@ -190,7 +190,7 @@ setup_proxychains_and_build() {
     sudo apt-get autoremove -y
     sudo apt-get clean
 
-    # ✅ Настраиваем proxychains4.conf
+    # ✅ Записываем конфигурацию proxychains4
     echo -e "${GREEN}[✓] Записываем конфигурацию proxychains4...${NC}"
     sudo tee /etc/proxychains4.conf > /dev/null <<EOL
 strict_chain
@@ -233,13 +233,13 @@ RUN export DEBIAN_FRONTEND=noninteractive && \
     rm -f /etc/proxychains4.conf && \
     apt-get autoremove -y && apt-get clean && \
     apt-get install -y \
-    libssl3 ca-certificates proxychains4 curl tzdata iptables net-tools iproute2 iptables-persistent apt-utils debconf-utils && \
+    libssl3 ca-certificates proxychains4 curl tzdata iptables net-tools iproute2 iptables-persistent apt-utils && \
     rm -rf /var/lib/apt/lists/*
 
 # ✅ Перезаписываем proxychains4.conf после установки (чтобы точно сохранить конфиг)
 COPY proxychains4.conf /etc/proxychains4.conf
 
-# ✅ Добавляем NAT в контейнер для маршрутизации трафика
+# ✅ Добавляем NAT в контейнер
 RUN iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE && \
     netfilter-persistent save
 
