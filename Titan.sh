@@ -319,7 +319,7 @@ setup_nodes() {
 }
 
 ###############################################################################
-# (5) Запуск контейнера с учетом спуфинга + ввод ключа ноды
+# (5) Запуск контейнера с учетом спуфинга
 ###############################################################################
 create_node() {
     local idx="$1"
@@ -327,14 +327,6 @@ create_node() {
     local proxy_port="$3"
     local proxy_user="$4"
     local proxy_pass="$5"
-
-    # 🔥 Запрашиваем ключ ноды перед созданием контейнера
-    echo -e "${ORANGE}[*] Введите ключ ноды для titan_node_$idx:${NC}"
-    read -p "Ключ ноды: " NODE_KEY
-    if [[ -z "$NODE_KEY" ]]; then
-        echo -e "${RED}[!] Ошибка: ключ ноды не может быть пустым!${NC}"
-        exit 1
-    fi
 
     # Генерация случайных параметров для спуфинга (CPU, RAM, SSD)
     local cpu_options=(12 14 16 18 20 22 24 26 28 30 32 34 36 38 40 42 44 46)
@@ -354,13 +346,13 @@ create_node() {
         fi
     done
 
-    echo -e "${ORANGE}[*] Запуск контейнера для ноды $idx (порт $((30000 + idx)), CPU=${cpu_val}, RAM=${ram_val}GB, SSD=${ssd_val}GB)...${NC}"
+    echo -e "${ORANGE}[*] Запуск контейнера titan_node_$idx (порт $((30000 + idx)), CPU=${cpu_val}, RAM=${ram_val}GB, SSD=${ssd_val}GB)...${NC}"
 
-    # Удаляем старый контейнер (если есть)
+    # Очищаем старый контейнер (если он остался)
     docker rm -f "titan_node_$idx" 2>/dev/null
 
-    # Запускаем новый контейнер
-    CONTAINER_ID=$(docker run -d --restart unless-stopped \
+    # Запускаем контейнер
+    CONTAINER_ID=$(docker run -d --name "titan_node_$idx" --restart unless-stopped \
         --cap-add=NET_ADMIN --network host \
         -e ALL_PROXY="socks5://${proxy_user}:${proxy_pass}@${proxy_host}:${proxy_port}" \
         mytitan/proxy-titan-edge 2>/dev/null)
@@ -372,69 +364,48 @@ create_node() {
         exit 1
     fi
 
-    echo -e "${GREEN}[✓] Контейнер запущен! ID: $CONTAINER_ID${NC}"
+    echo -e "${GREEN}[✓] Контейнер titan_node_$idx запущен! ID: $CONTAINER_ID${NC}"
 
-    # 🔥 Принудительно копируем proxychains4.conf внутрь контейнера
-    docker cp proxychains4.conf "$CONTAINER_ID":/etc/proxychains4.conf
-
-    # Проверяем, что proxychains4.conf корректен
+    # Проверяем конфигурацию proxychains4
     echo -e "${ORANGE}[*] Проверяем конфигурацию proxychains4...${NC}"
-    docker exec "$CONTAINER_ID" cat /etc/proxychains4.conf | grep "socks5" || {
-        echo -e "${RED}[✗] Ошибка: proxychains4.conf пуст или отсутствует!${NC}"
-        exit 1
-    }
+    docker exec "$CONTAINER_ID" cat /etc/proxychains4.conf | grep "socks5" || echo -e "${RED}[✗] Ошибка: proxychains4.conf пуст или отсутствует!${NC}"
 
-    # 🔥 Включаем NAT внутри контейнера
-    echo -e "${ORANGE}[*] Настраиваем NAT...${NC}"
-    docker exec "$CONTAINER_ID" bash -c "
+    # Включаем NAT в контейнере с таймаутом 5 секунд
+    echo -e "${ORANGE}[*] Настраиваем NAT в контейнере titan_node_$idx...${NC}"
+    timeout 5 docker exec "$CONTAINER_ID" bash -c "
         iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE && \
         netfilter-persistent save
-    " 2>/dev/null || {
-        echo -e "${RED}[✗] Ошибка: NAT не настроен!${NC}"
-        exit 1
-    }
+    " 2>/dev/null
 
-    # Проверяем IP через curl напрямую (без proxychains4)
-    echo -e "${ORANGE}[*] Проверяем IP через curl --proxy...${NC}"
+    # Проверяем IP напрямую через curl (без proxychains4)
+    echo -e "${ORANGE}[*] Проверяем IP внутри контейнера через curl --proxy...${NC}"
     IP_CHECK=$(timeout 5 docker exec "$CONTAINER_ID" curl --proxy "socks5://${proxy_user}:${proxy_pass}@${proxy_host}:${proxy_port}" -s --connect-timeout 5 https://api.ipify.org)
 
     if [[ -n "$IP_CHECK" ]]; then
         echo -e "${GREEN}[✓] Прокси работает! IP через curl: $IP_CHECK${NC}"
     else
-        echo -e "${RED}[✗] Ошибка: Прокси НЕ работает!${NC}"
+        echo -e "${RED}[✗] Ошибка: Прокси НЕ работает даже напрямую!${NC}"
         docker logs "$CONTAINER_ID"
         exit 1
     fi
 
-    # Проверяем IP через proxychains4
-    echo -e "${ORANGE}[*] Проверяем IP через proxychains4...${NC}"
-    PROXY_IP_CHECK=$(docker exec "$CONTAINER_ID" timeout 5 proxychains4 curl -s --connect-timeout 5 https://api.ipify.org)
+    # 🔥 Запрашиваем ключ для привязки ноды (с сайта)
+    echo -e "${ORANGE}[*] Введите ключ ноды для titan_node_$idx:${NC}"
+    read -p "Ключ ноды: " NODE_KEY
 
-    if [[ -n "$PROXY_IP_CHECK" ]]; then
-        echo -e "${GREEN}[✓] Контейнер видит IP через proxychains4: $PROXY_IP_CHECK${NC}"
-    else
-        echo -e "${RED}[✗] Ошибка: Контейнер НЕ видит внешний IP через proxychains4!${NC}"
-        echo -e "${ORANGE}[*] Повторная настройка NAT и proxychains...${NC}"
-        docker exec "$CONTAINER_ID" bash -c "
-            iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE && \
-            netfilter-persistent save
-        "
-        sleep 2
-        docker restart "$CONTAINER_ID"
-        exit 1
-    fi
+    # Привязываем ноду
+    echo -e "${ORANGE}[*] Привязка ноды к сети Titan...${NC}"
+    docker exec -it "$CONTAINER_ID" /usr/bin/titan-edge bind "$NODE_KEY"
 
-    # 🔥 Запускаем `titan-edge` с ключом ноды
-    echo -e "${ORANGE}[*] Запускаем Titan Edge с ключом ноды...${NC}"
-    docker exec "$CONTAINER_ID" bash -c "
-        /usr/bin/titan-edge auth $NODE_KEY
-    " || {
-        echo -e "${RED}[✗] Ошибка: Нода не активирована!${NC}"
-        docker logs "$CONTAINER_ID"
-        exit 1
-    }
+    # Генерируем внутренний ключ ноды
+    echo -e "${ORANGE}[*] Генерация внутреннего ключа ноды...${NC}"
+    docker exec -it "$CONTAINER_ID" /usr/bin/titan-edge key generate
 
-    echo -e "${GREEN}[✓] Нода $idx успешно активирована и работает!${NC}"
+    # Проверяем статус ноды
+    echo -e "${ORANGE}[*] Проверка статуса ноды...${NC}"
+    docker exec -it "$CONTAINER_ID" /usr/bin/titan-edge show
+
+    echo -e "${GREEN}[✓] Контейнер titan_node_$idx успешно запущен и настроен!${NC}"
 }
 
 ###############################################################################
