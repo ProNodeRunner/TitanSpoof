@@ -50,6 +50,17 @@ install_dependencies() {
     export DEBIAN_FRONTEND=noninteractive
     export NEEDRESTART_MODE=a  
 
+    # === Настройка NAT (если требуется) ===
+    echo -e "${ORANGE}[1.1/7] Настройка NAT (если необходимо)...${NC}"
+    if iptables -t nat -L -n | grep -q "MASQUERADE"; then
+        echo -e "${GREEN}[✓] NAT уже настроен.${NC}"
+    else
+        echo -e "${ORANGE}[*] Включение NAT-маскарадинга...${NC}"
+        sudo iptables -t nat -A POSTROUTING -o "$(ip route | grep default | awk '{print $5}')" -j MASQUERADE
+        sudo iptables-save > /etc/iptables/rules.v4
+        echo -e "${GREEN}[✓] NAT-маскарадинг включен.${NC}"
+    fi
+
     # === Запрос SOCKS5-прокси перед началом установки ===
     while true; do
         echo -ne "${ORANGE}Введите SOCKS5-прокси (формат: host:port:user:pass): ${NC}"
