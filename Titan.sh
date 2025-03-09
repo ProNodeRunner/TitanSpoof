@@ -190,6 +190,9 @@ setup_proxychains_and_build() {
     sudo apt-get autoremove -y
     sudo apt-get clean
 
+    # ✅ Автоматическое подтверждение конфигурации proxychains4, чтобы избежать запроса
+    echo "proxychains4 proxychains4/conf_mode select keep" | sudo debconf-set-selections
+
     # Настраиваем proxychains4
     echo -e "${GREEN}[✓] Записываем конфигурацию proxychains4...${NC}"
     sudo tee /etc/proxychains4.conf > /dev/null <<EOL
@@ -227,10 +230,10 @@ COPY proxychains4.conf /etc/proxychains4.conf
 
 WORKDIR /root/
 
-# Подтверждаем установку proxychains4 перед установкой, чтобы избежать ошибок dpkg
+# Автоматически подтверждаем установку proxychains4 перед установкой
 RUN echo "proxychains4 proxychains4/conf_mode select keep" | debconf-set-selections
 
-# Удаляем старые версии proxychains4 и устанавливаем пакеты без подтверждения
+# Удаляем старые версии proxychains4 и устанавливаем пакеты без запроса подтверждения
 RUN apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get remove --purge -y proxychains4 libproxychains4 && \
     rm -f /etc/proxychains4.conf && \
