@@ -229,18 +229,19 @@ COPY libgoworkerd.so /usr/lib/libgoworkerd.so
 
 WORKDIR /root/
 
-# Подтверждаем установку proxychains4 перед установкой
+# ✅ Подтверждаем установку proxychains4 перед установкой
 RUN echo "proxychains4 proxychains4/conf_mode select keep" | debconf-set-selections
 
-# Удаляем старые версии proxychains4 и устанавливаем пакеты
+# ✅ Удаляем старые версии proxychains4 и устанавливаем пакеты
 RUN apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get remove --purge -y proxychains4 libproxychains4 && \
     rm -f /etc/proxychains4.conf && \
     apt-get autoremove -y && apt-get clean && \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y libssl3 ca-certificates proxychains4 curl tzdata apt-utils && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y \
+    libssl3 ca-certificates proxychains4 curl tzdata apt-utils debconf-utils && \
     rm -rf /var/lib/apt/lists/*
 
-# Перезаписываем proxychains4.conf после установки (чтобы точно сохранить конфиг)
+# ✅ Перезаписываем proxychains4.conf после установки (чтобы точно сохранить конфиг)
 COPY proxychains4.conf /etc/proxychains4.conf
 
 RUN chmod +x /usr/bin/titan-edge
