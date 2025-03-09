@@ -218,12 +218,17 @@ COPY proxychains4.conf /etc/proxychains4.conf
 
 WORKDIR /root/
 
-# Устанавливаем пакеты без лишних вопросов
+# Устанавливаем пакеты без лишних вопросов и проблем с конфигурацией
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y \
     libssl3 \
     ca-certificates \
     proxychains4 \
+    tzdata \
+    apt-utils \
     && rm -rf /var/lib/apt/lists/*
+
+# Автоматически подтверждаем установку proxychains4.conf, чтобы избежать ошибки dpkg
+RUN echo "proxychains4 proxychains4/conf_mode select keep" | debconf-set-selections
 
 RUN chmod +x /usr/bin/titan-edge
 EOF
