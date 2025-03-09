@@ -228,7 +228,7 @@ COPY proxychains4.conf /etc/proxychains4.conf
 
 WORKDIR /root/
 
-# ✅ Отключаем подтверждения и удаляем старый конфиг proxychains4
+# ✅ Отключаем подтверждения и устанавливаем пакеты
 RUN export DEBIAN_FRONTEND=noninteractive && \
     rm -f /etc/proxychains4.conf && \
     apt-get update && \
@@ -240,9 +240,8 @@ RUN export DEBIAN_FRONTEND=noninteractive && \
 # ✅ Восстанавливаем конфигурацию proxychains4
 COPY proxychains4.conf /etc/proxychains4.conf
 
-# ✅ Настраиваем NAT (iptables) внутри контейнера
-RUN iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE && \
-    iptables-save > /etc/iptables.rules
+# ✅ Настраиваем NAT (iptables) с sudo
+RUN sh -c "sudo iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE && sudo iptables-save > /etc/iptables.rules"
 
 # ✅ Автозагрузка NAT при запуске контейнера
 RUN echo '#!/bin/sh' > /etc/init.d/iptables-restore && \
