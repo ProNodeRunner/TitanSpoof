@@ -348,11 +348,16 @@ create_node() {
 
     echo -e "${ORANGE}[*] Запуск контейнера titan_node_$idx (порт $((30000 + idx)), CPU=${cpu_val}, RAM=${ram_val}GB, SSD=${ssd_val}GB)...${NC}"
 
+    # Очищаем старый контейнер (если он остался)
+    docker rm -f "titan_node_$idx" 2>/dev/null
+
+    # Запускаем контейнер
     CONTAINER_ID=$(docker run -d --name "titan_node_$idx" --restart unless-stopped \
         --cap-add=NET_ADMIN --network host \
         -e ALL_PROXY="socks5://${proxy_user}:${proxy_pass}@${proxy_host}:${proxy_port}" \
         mytitan/proxy-titan-edge 2>/dev/null)
 
+    # Проверяем, что контейнер создался
     if [[ -z "$CONTAINER_ID" ]]; then
         echo -e "${RED}[✗] Ошибка: контейнер titan_node_$idx не был создан!${NC}"
         docker ps -a
@@ -365,16 +370,16 @@ create_node() {
     echo -e "${ORANGE}[*] Проверяем конфигурацию proxychains4...${NC}"
     docker exec "$CONTAINER_ID" cat /etc/proxychains4.conf | grep "socks5" || echo -e "${RED}[✗] Ошибка: proxychains4.conf пуст или отсутствует!${NC}"
 
-    # Включаем NAT в контейнере
+    # Включаем NAT в контейнере с таймаутом 5 секунд
     echo -e "${ORANGE}[*] Настраиваем NAT в контейнере titan_node_$idx...${NC}"
-    docker exec "$CONTAINER_ID" bash -c "
+    timeout 5 docker exec "$CONTAINER_ID" bash -c "
         iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE && \
         netfilter-persistent save
     " 2>/dev/null
 
     # Проверяем IP напрямую через curl (без proxychains4)
     echo -e "${ORANGE}[*] Проверяем IP внутри контейнера через curl --proxy...${NC}"
-    IP_CHECK=$(docker exec "$CONTAINER_ID" curl --proxy "socks5://${proxy_user}:${proxy_pass}@${proxy_host}:${proxy_port}" -s --connect-timeout 5 https://api.ipify.org)
+    IP_CHECK=$(timeout 5 docker exec "$CONTAINER_ID" curl --proxy "socks5://${proxy_user}:${proxy_pass}@${proxy_host}:${proxy_port}" -s --connect-timeout 5 https://api.ipify.org)
 
     if [[ -n "$IP_CHECK" ]]; then
         echo -e "${GREEN}[✓] Прокси работает! IP через curl: $IP_CHECK${NC}"
