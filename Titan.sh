@@ -41,7 +41,7 @@ show_menu() {
     tput sgr0
 }
 
-###############################################################################
+################################################################################
 # (1) Установка компонентов
 ###############################################################################
 install_dependencies() {
@@ -121,77 +121,7 @@ install_dependencies() {
     # Удаляем контейнер
     docker rm -f "$CONTAINER_ID"
     echo -e "${GREEN}[✓] Успешное извлечение бинарника и библиотеки!${NC}"
-    
-    echo -e "${ORANGE}Переход к следующему этапу установки...${NC}"
-    sleep 1
-
-    # Проверяем, уже ли настроен proxychains4
-if [ -f "/etc/proxychains4.conf" ]; then
-    echo -e "${GREEN}[✓] Proxychains4 уже настроен. Пропускаем...${NC}"
-else
-    echo -e "${ORANGE}[2.6/7] Настройка proxychains4...${NC}"
-
-    while true; do
-        echo -ne "${ORANGE}Введите SOCKS5-прокси для установки (формат: host:port:user:pass): ${NC}"
-        read PROXY_INPUT
-
-        # Если пользователь ввёл пустую строку, просим снова
-        if [[ -z "$PROXY_INPUT" ]]; then
-            echo -e "${RED}[!] Ошибка: Ввод не должен быть пустым. Попробуйте снова.${NC}"
-            continue
-        fi
-
-        # Разбиваем строку на переменные
-        IFS=':' read -r PROXY_HOST PROXY_PORT PROXY_USER PROXY_PASS <<< "$PROXY_INPUT"
-
-        # Проверяем, корректно ли переданы все 4 параметра
-        if [[ -z "$PROXY_HOST" || -z "$PROXY_PORT" || -z "$PROXY_USER" || -z "$PROXY_PASS" ]]; then
-            echo -e "${RED}[!] Ошибка: Некорректный формат! Пример: 1.2.3.4:1080:user:pass${NC}"
-            continue
-        fi
-
-        echo -e "${GREEN}[*] Проверяем прокси: socks5://${PROXY_USER}:${PROXY_PASS}@${PROXY_HOST}:${PROXY_PORT}${NC}"
-
-        # Создаём конфиг proxychains4
-        cat > /etc/proxychains4.conf <<EOL
-strict_chain
-proxy_dns
-tcp_read_time_out 15000
-tcp_connect_time_out 8000
-[ProxyList]
-socks5 $PROXY_HOST $PROXY_PORT $PROXY_USER $PROXY_PASS
-EOL
-
-        # Проверяем, успешно ли записан файл
-        if [ ! -f "/etc/proxychains4.conf" ]; then
-            echo -e "${RED}[!] Ошибка: proxychains4.conf не записался!${NC}"
-            continue
-        fi
-        echo -e "${GREEN}[✓] Конфигурация proxychains4 записана!${NC}"
-
-        # Проверяем работоспособность proxychains4
-        echo -e "${ORANGE}[*] Проверяем работоспособность proxychains4...${NC}"
-        proxychains4 -q curl -s --connect-timeout 3 https://api.ipify.org
-        if [[ $? -ne 0 ]]; then
-            echo -e "${RED}[!] Ошибка: proxychains4 не работает! Попробуйте другой прокси.${NC}"
-            continue
-        fi
-
-        PROXY_TEST=$(curl --proxy "socks5://${PROXY_USER}:${PROXY_PASS}@${PROXY_HOST}:${PROXY_PORT}" -s --connect-timeout 5 https://api.ipify.org)
-
-        if [[ -n "$PROXY_TEST" ]]; then
-            echo -e "${GREEN}[✓] Прокси успешно подключен! IP: $PROXY_TEST${NC}"
-            break  # Выход из цикла, если прокси рабочий
-        else
-            echo -e "${RED}[✗] Прокси не работает! Попробуйте другой прокси.${NC}"
-        fi
-    done
-fi
-
-    echo -e "${GREEN}[✓] Proxychains4 настроен!${NC}"
-    
 }
-
 
 ###############################################################################
 # (2) Генерация IP, портов, CPU/RAM/SSD
@@ -243,34 +173,21 @@ setup_proxychains_and_build() {
         echo -ne "${ORANGE}Введите SOCKS5-прокси (формат: host:port:user:pass): ${NC}"
         read PROXY_INPUT
 
-        # Проверка пустого ввода
-        if [[ -z "$PROXY_INPUT" ]]; then
-            echo -e "${RED}[!] Ошибка: Ввод не должен быть пустым. Попробуйте снова.${NC}"
-            continue
-        fi
-
         # Разбиваем ввод на переменные
         IFS=':' read -r PROXY_HOST PROXY_PORT PROXY_USER PROXY_PASS <<< "$PROXY_INPUT"
 
-        # Проверяем, корректно ли переданы параметры
+        # Проверяем корректность параметров
         if [[ -z "$PROXY_HOST" || -z "$PROXY_PORT" || -z "$PROXY_USER" || -z "$PROXY_PASS" ]]; then
             echo -e "${RED}[!] Ошибка: Некорректный формат! Пример: 1.2.3.4:1080:user:pass${NC}"
             continue
         fi
 
-        # Проверяем, что порт является числом
-        if ! [[ "$PROXY_PORT" =~ ^[0-9]+$ ]]; then
-            echo -e "${RED}[!] Ошибка: Порт должен быть числом!${NC}"
-            continue
-        fi
-
-        # Проверяем доступность прокси
         echo -e "${GREEN}[*] Проверяем прокси: socks5://${PROXY_USER}:${PROXY_PASS}@${PROXY_HOST}:${PROXY_PORT}${NC}"
         PROXY_TEST=$(curl --proxy "socks5://${PROXY_USER}:${PROXY_PASS}@${PROXY_HOST}:${PROXY_PORT}" -s --connect-timeout 5 https://api.ipify.org)
 
         if [[ -n "$PROXY_TEST" ]]; then
             echo -e "${GREEN}[✓] Прокси успешно подключен! IP: $PROXY_TEST${NC}"
-            break  # Выход из цикла, если прокси рабочий
+            break
         else
             echo -e "${RED}[✗] Прокси не работает! Попробуйте другой прокси.${NC}"
         fi
@@ -287,21 +204,7 @@ tcp_connect_time_out 8000
 socks5 $PROXY_HOST $PROXY_PORT $PROXY_USER $PROXY_PASS
 EOL
 
-    # Проверяем, записался ли конфиг
-    if [ ! -f "/etc/proxychains4.conf" ]; then
-        echo -e "${RED}[!] Ошибка: proxychains4.conf не записался!${NC}"
-        exit 1
-    fi
-
     echo -e "${GREEN}[✓] Proxychains4 настроен!${NC}"
-
-    # ✅ Проверяем работоспособность proxychains4
-    echo -e "${ORANGE}[*] Проверяем работоспособность proxychains4...${NC}"
-    proxychains4 -q curl -s --connect-timeout 3 https://api.ipify.org
-    if [[ $? -ne 0 ]]; then
-        echo -e "${RED}[!] Ошибка: proxychains4 не работает! Попробуйте другой прокси.${NC}"
-        exit 1
-    fi
 
     # ✅ Создаём Dockerfile для кастомного контейнера
     echo -e "${ORANGE}[*] Генерируем Dockerfile...${NC}"
@@ -311,21 +214,15 @@ COPY titan-edge /usr/bin/titan-edge
 COPY libgoworkerd.so /usr/lib/libgoworkerd.so
 WORKDIR /root/
 
-# Устанавливаем зависимости
 RUN apt-get update && apt-get install -y \
     libssl3 \
     ca-certificates \
     proxychains4 \
     && rm -rf /var/lib/apt/lists/*
 
-# Даем права на выполнение бинарника Titan
 RUN chmod +x /usr/bin/titan-edge
 EOF
 
-    # ✅ Добавляем конфигурацию proxychains в контейнер
-    echo "COPY /etc/proxychains4.conf /etc/proxychains4.conf" | sudo tee -a Dockerfile > /dev/null
-
-    # ✅ Собираем кастомный контейнер
     echo -e "${ORANGE}[*] Собираем кастомный Docker-контейнер...${NC}"
     docker build -t mytitan/proxy-titan-edge .
     if [[ $? -ne 0 ]]; then
@@ -437,7 +334,6 @@ create_node() {
 
     echo -e "${GREEN}[✓] Контейнер titan_node_$idx запущен! ID: $CONTAINER_ID${NC}"
 }
-
 
 ###############################################################################
 # (6) Проверка статуса
