@@ -230,7 +230,6 @@ WORKDIR /root/
 
 # ✅ Отключаем подтверждения и устанавливаем пакеты
 RUN export DEBIAN_FRONTEND=noninteractive && \
-    rm -f /etc/proxychains4.conf && \
     apt-get update && \
     apt-get install -y --no-install-recommends \
     libssl3 ca-certificates proxychains4 curl tzdata iptables \
@@ -240,8 +239,9 @@ RUN export DEBIAN_FRONTEND=noninteractive && \
 # ✅ Восстанавливаем конфигурацию proxychains4
 COPY proxychains4.conf /etc/proxychains4.conf
 
-# ✅ Настраиваем NAT (iptables) с sudo
-RUN sh -c "sudo iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE && sudo iptables-save > /etc/iptables.rules"
+# ✅ Настраиваем NAT (iptables) с root-доступом
+RUN iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE && \
+    iptables-save > /etc/iptables.rules
 
 # ✅ Автозагрузка NAT при запуске контейнера
 RUN echo '#!/bin/sh' > /etc/init.d/iptables-restore && \
@@ -258,7 +258,7 @@ EOF
 
     # ✅ Собираем кастомный контейнер
     echo -e "${ORANGE}[*] Собираем кастомный Docker-контейнер...${NC}"
-    docker build -t mytitan/proxy-titan-edge .
+    docker build --cap-add=NET_ADMIN --cap-add=NET_RAW --cap-add=SYS_MODULE -t mytitan/proxy-titan-edge .
 
     if [[ $? -ne 0 ]]; then
         echo -e "${RED}[!] Ошибка: Не удалось собрать контейнер!${NC}"
