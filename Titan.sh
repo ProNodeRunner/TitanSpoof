@@ -50,94 +50,49 @@ install_dependencies() {
     export DEBIAN_FRONTEND=noninteractive
     export NEEDRESTART_MODE=a  
 
-    # === Запрос SOCKS5-прокси перед началом установки ===
-    while true; do
-        echo -ne "${ORANGE}Введите SOCKS5-прокси (формат: host:port:user:pass): ${NC}"
-        read PROXY_INPUT
+    sudo bash -c "echo 'iptables-persistent iptables-persistent/autosave_v4 boolean false' | debconf-set-selections"
+    sudo bash -c "echo 'iptables-persistent iptables-persistent/autosave_v6 boolean false' | debconf-set-selections"
+    echo 'debconf debconf/frontend select Noninteractive' | sudo debconf-set-selections  
 
-        # Проверка пустого ввода
-        if [[ -z "$PROXY_INPUT" ]]; then
-            echo -e "${RED}[!] Ошибка: Ввод не должен быть пустым. Попробуйте снова.${NC}"
-            continue
-        fi
+    sudo systemctl stop unattended-upgrades
+    sudo systemctl disable unattended-upgrades || true
 
-        # Разбираем ввод в переменные
-        IFS=':' read -r PROXY_HOST PROXY_PORT PROXY_USER PROXY_PASS <<< "$PROXY_INPUT"
+    sudo apt-get update -yq && sudo apt-get upgrade -yq
 
-        # Проверяем корректность
-        if [[ -z "$PROXY_HOST" || -z "$PROXY_PORT" || -z "$PROXY_USER" || -z "$PROXY_PASS" ]]; then
-            echo -e "${RED}[!] Ошибка: Неверный формат! Пример: 1.2.3.4:1080:user:pass${NC}"
-            continue
-        fi
+    echo -e "${ORANGE}[2/7] Установка пакетов...${NC}"
+    sudo apt-get install -yq \
+        apt-transport-https ca-certificates curl gnupg lsb-release jq \
+        screen cgroup-tools net-tools ccze netcat iptables-persistent bc \
+        ufw git build-essential proxychains4 needrestart
 
-        # Проверяем работу прокси
-        echo -e "${GREEN}[*] Проверяем прокси: socks5://${PROXY_USER}:${PROXY_PASS}@${PROXY_HOST}:${PROXY_PORT}${NC}"
-        PROXY_TEST=$(curl --proxy "socks5://${PROXY_USER}:${PROXY_PASS}@${PROXY_HOST}:${PROXY_PORT}" -s --connect-timeout 5 https://api.ipify.org)
-
-        if [[ -n "$PROXY_TEST" ]]; then
-            echo -e "${GREEN}[✓] Прокси успешно подключен! IP: $PROXY_TEST${NC}"
-            break
-        else
-            echo -e "${RED}[✗] Прокси не работает! Попробуйте другой прокси.${NC}"
-        fi
-    done
-
-    # === Запись конфигурации proxychains4 ===
-    echo -e "${GREEN}[✓] Записываем конфигурацию proxychains4...${NC}"
-    sudo tee /etc/proxychains4.conf > /dev/null <<EOL
-strict_chain
-proxy_dns
-tcp_read_time_out 15000
-tcp_connect_time_out 8000
-[ProxyList]
-socks5 $PROXY_HOST $PROXY_PORT $PROXY_USER $PROXY_PASS
-EOL
-
-    # ✅ Копируем конфиг в текущую директорию для Docker
-    cp /etc/proxychains4.conf ./proxychains4.conf
-
-    # Проверяем, записался ли конфиг
-    if [ ! -f "./proxychains4.conf" ]; then
-        echo -e "${RED}[!] Ошибка: proxychains4.conf не скопировался в текущую директорию!${NC}"
-        exit 1
+    # Проверяем, установлен ли curl
+    if ! command -v curl &>/dev/null; then
+        echo -e "${RED}[!] curl не установлен! Устанавливаем...${NC}"
+        sudo apt-get install -yq curl
     fi
 
-    echo -e "${GREEN}[✓] Proxychains4 настроен и скопирован в текущую директорию!${NC}"
+    # Добавляем репозиторий Docker
+    echo -e "${ORANGE}[2.1/7] Добавляем репозиторий Docker...${NC}"
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo tee /usr/share/keyrings/docker-archive-keyring.gpg > /dev/null
+    echo "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
 
-    # === Проверка работоспособности proxychains4 ===
-    echo -e "${ORANGE}[*] Проверяем работоспособность proxychains4...${NC}"
-    proxychains4 -q curl -s --connect-timeout 3 https://api.ipify.org
-    if [[ $? -ne 0 ]]; then
-        echo -e "${RED}[!] Ошибка: proxychains4 не работает! Попробуйте другой прокси.${NC}"
-        exit 1
-    fi
+    echo -e "${ORANGE}[2.2/7] Обновление списка пакетов для Docker...${NC}"
+    sudo apt-get update -yq
 
-    # === Проверка и установка Docker ===
-    echo -e "${ORANGE}[2/7] Установка и проверка Docker...${NC}"
-    if ! command -v docker &> /dev/null; then
-        echo -e "${ORANGE}[*] Устанавливаем Docker...${NC}"
-        sudo apt-get update -yq
-        sudo apt-get install -yq docker.io
-    fi
+    echo -e "${ORANGE}[2.3/7] Установка Docker...${NC}"
+    sudo apt-get install -yq docker-ce docker-ce-cli containerd.io
 
-    # Проверяем, работает ли Docker
-    if ! sudo systemctl is-active --quiet docker; then
-        echo -e "${ORANGE}[*] Запускаем Docker...${NC}"
-        sudo systemctl start docker
-        sudo systemctl enable docker
-    fi
+    sudo systemctl start docker
+    sudo systemctl enable docker
 
-    # Проверяем доступ пользователя к Docker
-    if ! docker ps > /dev/null 2>&1; then
-        echo -e "${RED}[!] У пользователя нет доступа к Docker. Добавляем в группу docker...${NC}"
-        sudo usermod -aG docker $USER
-        newgrp docker
-    fi
+    # Убираем лишний вопрос о перезапуске служб
+    sudo sed -i 's/#\$nrconf{restart} = "i"/\$nrconf{restart} = "a"/' /etc/needrestart/needrestart.conf
 
-    # ✅ Извлечение Titan Edge из контейнера
+    echo -e "${GREEN}[✓] Docker установлен и работает!${NC}"
+
     echo -e "${ORANGE}[2.5/7] Извлечение Titan Edge из контейнера...${NC}"
-
-    # Создаем временный контейнер
+    
+    # Создаём контейнер
     CONTAINER_ID=$(docker create nezha123/titan-edge)
     if [[ -z "$CONTAINER_ID" ]]; then
         echo -e "${RED}[!] Ошибка: не удалось создать контейнер для извлечения Titan Edge!${NC}"
@@ -147,29 +102,33 @@ EOL
 
     # Копируем бинарник Titan Edge
     docker cp "$CONTAINER_ID":/usr/bin/titan-edge ./titan-edge
-    docker cp "$CONTAINER_ID":/usr/lib/libgoworkerd.so ./libgoworkerd.so
+    if [[ ! -f ./titan-edge ]]; then
+        echo -e "${RED}[!] Ошибка: бинарник titan-edge не найден!${NC}"
+        docker rm -f "$CONTAINER_ID"
+        exit 1
+    fi
+    chmod +x ./titan-edge
+    echo -e "${GREEN}[✓] titan-edge успешно извлечён!${NC}"
 
-    # Проверяем, скопировались ли файлы
-    if [[ ! -f "./titan-edge" || ! -f "./libgoworkerd.so" ]]; then
-        echo -e "${RED}[!] Ошибка: Не удалось скопировать titan-edge или libgoworkerd.so!${NC}"
+    # Копируем библиотеку
+    docker cp "$CONTAINER_ID":/usr/lib/libgoworkerd.so ./libgoworkerd.so
+    if [[ ! -f ./libgoworkerd.so ]]; then
+        echo -e "${RED}[!] Ошибка: библиотека libgoworkerd.so не найдена!${NC}"
         docker rm -f "$CONTAINER_ID"
         exit 1
     fi
 
-    chmod +x ./titan-edge
-    chmod 755 ./libgoworkerd.so
+    # Перемещаем библиотеку
+    mv ./libgoworkerd.so /usr/lib/
+    chmod 755 /usr/lib/libgoworkerd.so
+    ldconfig
+    echo -e "${GREEN}[✓] libgoworkerd.so успешно извлечена и зарегистрирована!${NC}"
 
-    # Удаляем временный контейнер
+    # Удаляем контейнер
     docker rm -f "$CONTAINER_ID"
-    echo -e "${GREEN}[✓] Titan Edge и библиотека успешно извлечены!${NC}"
-
-    # ✅ Сохраняем конфиг прокси для дальнейшего использования
-    echo "$PROXY_HOST:$PROXY_PORT:$PROXY_USER:$PROXY_PASS" > /root/proxy_config.txt
-    chmod 600 /root/proxy_config.txt  # Устанавливаем права на файл
-
-    # ✅ Запускаем процесс сборки контейнера
-    setup_proxychains_and_build
+    echo -e "${GREEN}[✓] Успешное извлечение бинарника и библиотеки!${NC}"
 }
+
 ###############################################################################
 # (2) Генерация IP, портов, CPU/RAM/SSD
 ###############################################################################
@@ -217,40 +176,58 @@ setup_proxychains_and_build() {
         exit 1
     fi
 
-    # ✅ Проверяем, что proxychains4.conf существует в текущей директории
-    if [ ! -f "./proxychains4.conf" ]; then
-        echo -e "${RED}[!] Ошибка: proxychains4.conf отсутствует!${NC}"
+    # Настраиваем proxychains4
+    echo -e "${GREEN}[✓] Записываем конфигурацию proxychains4...${NC}"
+    sudo tee /etc/proxychains4.conf > /dev/null <<EOL
+strict_chain
+proxy_dns
+tcp_read_time_out 15000
+tcp_connect_time_out 8000
+[ProxyList]
+socks5 $PROXY_HOST $PROXY_PORT $PROXY_USER $PROXY_PASS
+EOL
+
+    # Проверяем, записался ли конфиг
+    if [ ! -f "/etc/proxychains4.conf" ]; then
+        echo -e "${RED}[!] Ошибка: proxychains4.conf не записался!${NC}"
         exit 1
     fi
 
-    # ✅ Проверяем, что файлы бинарников существуют
-    if [ ! -f "./libgoworkerd.so" ] || [ ! -f "./titan-edge" ]; then
-        echo -e "${RED}[!] Ошибка: Не найден один из файлов: libgoworkerd.so или titan-edge!${NC}"
+    echo -e "${GREEN}[✓] Proxychains4 настроен!${NC}"
+
+    # ✅ Проверяем работоспособность proxychains4
+    echo -e "${ORANGE}[*] Проверяем работоспособность proxychains4...${NC}"
+    proxychains4 -q curl -s --connect-timeout 3 https://api.ipify.org
+    if [[ $? -ne 0 ]]; then
+        echo -e "${RED}[!] Ошибка: proxychains4 не работает! Проверьте прокси.${NC}"
         exit 1
     fi
 
+    # ✅ Генерируем Dockerfile
     echo -e "${ORANGE}[*] Генерируем Dockerfile...${NC}"
     sudo tee Dockerfile > /dev/null <<EOF
 FROM ubuntu:22.04
-
 COPY titan-edge /usr/bin/titan-edge
 COPY libgoworkerd.so /usr/lib/libgoworkerd.so
-COPY proxychains4.conf /etc/proxychains4.conf
-
 WORKDIR /root/
 
-RUN apt-get update && apt-get install -y \\
-    libssl3 \\
-    ca-certificates \\
-    proxychains4 \\
+# Устанавливаем зависимости
+RUN apt-get update && apt-get install -y \
+    libssl3 \
+    ca-certificates \
+    proxychains4 \
     && rm -rf /var/lib/apt/lists/*
 
+# Даем права на выполнение бинарника Titan
 RUN chmod +x /usr/bin/titan-edge
 EOF
 
+    # ✅ Добавляем конфигурацию proxychains в контейнер
+    echo "COPY /etc/proxychains4.conf /etc/proxychains4.conf" | sudo tee -a Dockerfile > /dev/null
+
+    # ✅ Собираем кастомный контейнер
     echo -e "${ORANGE}[*] Собираем кастомный Docker-контейнер...${NC}"
     docker build -t mytitan/proxy-titan-edge .
-
     if [[ $? -ne 0 ]]; then
         echo -e "${RED}[!] Ошибка: Не удалось собрать контейнер!${NC}"
         exit 1
