@@ -256,9 +256,9 @@ RUN chmod +x /usr/bin/titan-edge
 CMD [ "tail", "-f", "/dev/null" ]
 EOF
 
-    # ✅ Собираем кастомный контейнер
+    # ✅ Собираем кастомный контейнер (убрали --cap-add, так как он не нужен в build)
     echo -e "${ORANGE}[*] Собираем кастомный Docker-контейнер...${NC}"
-    docker build --cap-add=NET_ADMIN --cap-add=NET_RAW --cap-add=SYS_MODULE -t mytitan/proxy-titan-edge .
+    docker build -t mytitan/proxy-titan-edge .
 
     if [[ $? -ne 0 ]]; then
         echo -e "${RED}[!] Ошибка: Не удалось собрать контейнер!${NC}"
