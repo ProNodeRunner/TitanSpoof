@@ -228,10 +228,10 @@ COPY proxychains4.conf /etc/proxychains4.conf
 
 WORKDIR /root/
 
-# ✅ Устанавливаем пакеты, удаляем proxychains4 БЕЗ ПОДТВЕРЖДЕНИЙ
+# ✅ Убираем подтверждения debconf перед установкой proxychains4
 RUN export DEBIAN_FRONTEND=noninteractive && \
+    echo 'debconf debconf/frontend select Noninteractive' | debconf-set-selections && \
     apt-get update && \
-    echo "proxychains4	proxychains4/conf_mode	boolean false" | debconf-set-selections && \
     apt-get install -y --no-install-recommends \
     libssl3 ca-certificates proxychains4 curl tzdata iptables \
     net-tools iproute2 iptables-persistent apt-utils && \
@@ -263,6 +263,7 @@ EOF
 
     echo -e "${GREEN}[✓] Кастомный контейнер собран успешно!${NC}"
 }
+
 
 
 ###############################################################################
