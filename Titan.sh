@@ -190,7 +190,7 @@ setup_proxychains_and_build() {
     sudo apt-get autoremove -y
     sudo apt-get clean
 
-    # ✅ Записываем конфигурацию proxychains4
+    # ✅ Создаём конфигурацию proxychains4
     echo -e "${GREEN}[✓] Записываем конфигурацию proxychains4...${NC}"
     sudo tee /etc/proxychains4.conf > /dev/null <<EOL
 strict_chain
@@ -215,10 +215,10 @@ EOL
         echo -e "${RED}[!] Ошибка: titan-edge или libgoworkerd.so отсутствуют!${NC}"
         exit 1
     fi
-    
-# ✅ Генерируем Dockerfile
-echo -e "${ORANGE}[*] Генерируем Dockerfile...${NC}"
-sudo tee Dockerfile > /dev/null <<EOF
+
+    # ✅ Генерируем Dockerfile
+    echo -e "${ORANGE}[*] Генерируем Dockerfile...${NC}"
+    sudo tee Dockerfile > /dev/null <<EOF
 FROM ubuntu:22.04
 
 # ✅ Копируем бинарники Titan и конфиг proxychains4
@@ -252,8 +252,6 @@ RUN chmod +x /usr/bin/titan-edge
 CMD [ "tail", "-f", "/dev/null" ]
 EOF
 
-
-
     # ✅ Собираем кастомный контейнер
     echo -e "${ORANGE}[*] Собираем кастомный Docker-контейнер...${NC}"
     docker build -t mytitan/proxy-titan-edge .
@@ -265,6 +263,7 @@ EOF
 
     echo -e "${GREEN}[✓] Кастомный контейнер собран успешно!${NC}"
 }
+
 
 ###############################################################################
 # (4) Создание/запуск ноды
