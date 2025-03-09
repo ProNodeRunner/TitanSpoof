@@ -183,6 +183,8 @@ EOL
     fi
 
         # *** Вызов функции для создания кастомного контейнера ***
+echo "$PROXY_HOST:$PROXY_PORT:$PROXY_USER:$PROXY_PASS" > /root/proxy_config.txt
+chmod 600 /root/proxy_config.txt  # Устанавливаем права на файл
     setup_proxychains_and_build
 }
 
