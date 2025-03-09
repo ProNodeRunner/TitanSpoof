@@ -283,7 +283,7 @@ setup_nodes() {
 
             if [[ -n "$PROXY_TEST" ]]; then
                 echo -e "${GREEN}[✓] Прокси успешно подключен! IP: $PROXY_TEST${NC}"
-                break
+                break  # ✅ Выход из цикла после успешной проверки
             else
                 echo -e "${RED}[✗] Прокси не работает!${NC}"
                 curl --proxy "socks5://${PROXY_USER}:${PROXY_PASS}@${PROXY_HOST}:${PROXY_PORT}" -v --connect-timeout 5 https://api.ipify.org
@@ -291,8 +291,15 @@ setup_nodes() {
             fi
         done
 
+        # ✅ Добавляем отладочный вывод перед вызовом create_node()
+        echo -e "${ORANGE}[*] Запуск create_node для ноды $i...${NC}"
         create_node "$i" "$PROXY_HOST" "$PROXY_PORT" "$PROXY_USER" "$PROXY_PASS"
+        
+        # ✅ Проверка, не завис ли скрипт после вызова create_node()
+        echo -e "${GREEN}[✓] Нода $i успешно обработана!${NC}"
     done
+
+    echo -e "${GREEN}[✓] Все ноды обработаны!${NC}"
 }
 
 ###############################################################################
