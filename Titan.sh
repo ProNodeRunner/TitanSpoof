@@ -354,8 +354,8 @@ create_node() {
     CONTAINER_ID=$(docker run -d \
         --name "titan_node_$idx" \
         --restart unless-stopped \
-        --cap-add=NET_ADMIN \  # ⚡ Даем контейнеру права на изменение сети
-        --network host \  # ⚡ Используем NAT-хост
+        --cap-add=NET_ADMIN \
+        --network host \
         --cpu-quota=$((cpu_val * 100000)) \
         --memory="${ram_val}g" \
         -v /etc/proxychains4.conf:/etc/proxychains4.conf:ro \
@@ -364,8 +364,11 @@ create_node() {
 
     if [[ -z "$CONTAINER_ID" ]]; then
         echo -e "${RED}[✗] Ошибка запуска контейнера titan_node_$idx${NC}"
+        docker ps -a | grep "titan_node_$idx"
         return 1
     fi
+
+    echo -e "${GREEN}[✓] Контейнер titan_node_$idx запущен! ID: $CONTAINER_ID${NC}"
 
     # ✅ Включаем NAT в контейнере
     echo -e "${ORANGE}[*] Настраиваем NAT в контейнере titan_node_$idx...${NC}"
@@ -374,9 +377,9 @@ create_node() {
         netfilter-persistent save
     "
 
-    # ✅ Проверяем, видит ли контейнер внешний IP через прокси
-    echo -e "${ORANGE}[*] Проверяем IP внутри контейнера через proxychains4...${NC}"
-    IP_CHECK=$(docker exec "$CONTAINER_ID" proxychains4 curl -s --connect-timeout 5 https://api.ipify.org)
+    # ✅ Проверяем, видит ли контейнер внешний IP через прокси (таймаут 5 секунд)
+    echo -e "${ORANGE}[*] Проверяем IP внутри контейнера через proxychains4 (таймаут 5 сек)...${NC}"
+    IP_CHECK=$(docker exec "$CONTAINER_ID" timeout 5 proxychains4 curl -s --connect-timeout 5 https://api.ipify.org)
 
     if [[ -n "$IP_CHECK" ]]; then
         echo -e "${GREEN}[✓] Контейнер titan_node_$idx видит IP через прокси: $IP_CHECK${NC}"
@@ -386,7 +389,8 @@ create_node() {
         return 1
     fi
 
-    echo -e "${GREEN}[✓] Контейнер titan_node_$idx запущен! ID: $CONTAINER_ID${NC}"
+    # ✅ Логирование для отладки
+    echo -e "${GREEN}[✓] Контейнер titan_node_$idx полностью запущен!${NC}"
 }
 
 ###############################################################################
