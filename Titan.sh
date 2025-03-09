@@ -350,13 +350,13 @@ create_node() {
 
     echo -e "${ORANGE}[*] Запуск контейнера titan_node_$idx (порт $((30000 + idx)), CPU=${cpu_val}, RAM=${ram_val}GB, SSD=${ssd_val}GB)...${NC}"
 
-    # ✅ Запускаем контейнер с NAT, правами NET_ADMIN и proxychains
+    # ✅ Запускаем контейнер
     CONTAINER_ID=$(docker run -d --name "titan_node_$idx" --restart unless-stopped \
         --cap-add=NET_ADMIN --network host \
         -e ALL_PROXY="socks5://${proxy_user}:${proxy_pass}@${proxy_host}:${proxy_port}" \
         mytitan/proxy-titan-edge 2>/dev/null)
 
-    # Проверяем, что контейнер запущен
+    # Проверяем, что контейнер создался
     if [[ -z "$CONTAINER_ID" ]]; then
         echo -e "${RED}[✗] Ошибка: контейнер titan_node_$idx не был создан!${NC}"
         docker ps -a
@@ -372,7 +372,7 @@ create_node() {
         netfilter-persistent save
     " 2>/dev/null
 
-    # ✅ Проверяем, видит ли контейнер внешний IP через прокси
+    # ✅ Проверяем IP через proxychains4 внутри контейнера
     echo -e "${ORANGE}[*] Проверяем IP внутри контейнера через proxychains4...${NC}"
     IP_CHECK=$(docker exec "$CONTAINER_ID" timeout 5 proxychains4 curl -s --connect-timeout 5 https://api.ipify.org)
 
@@ -384,7 +384,7 @@ create_node() {
         exit 1
     fi
 
-    echo -e "${GREEN}[✓] Контейнер titan_node_$idx запущен и готов к работе!${NC}"
+    echo -e "${GREEN}[✓] Контейнер titan_node_$idx успешно запущен и настроен!${NC}"
 }
 
 ###############################################################################
