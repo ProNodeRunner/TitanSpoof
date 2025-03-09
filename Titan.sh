@@ -228,18 +228,17 @@ COPY proxychains4.conf /etc/proxychains4.conf
 
 WORKDIR /root/
 
-# ✅ Убираем подтверждения debconf перед установкой proxychains4
+# ✅ Отключаем подтверждения и удаляем старый конфиг proxychains4
 RUN export DEBIAN_FRONTEND=noninteractive && \
-    echo "proxychains4	proxychains4/conf_mode	boolean false" | debconf-set-selections && \
+    rm -f /etc/proxychains4.conf && \
     apt-get update && \
     apt-get install -y --no-install-recommends \
     libssl3 ca-certificates proxychains4 curl tzdata iptables \
     net-tools iproute2 iptables-persistent apt-utils && \
     rm -rf /var/lib/apt/lists/*
 
-# ✅ Отключаем запросы dpkg по конфликту конфигурационного файла proxychains4
-RUN dpkg-divert --rename --add /etc/proxychains4.conf && \
-    echo "proxychains4	proxychains4/conf_mode	boolean false" | debconf-set-selections
+# ✅ Восстанавливаем конфигурацию proxychains4
+COPY proxychains4.conf /etc/proxychains4.conf
 
 # ✅ Настраиваем NAT (iptables) внутри контейнера
 RUN iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE && \
