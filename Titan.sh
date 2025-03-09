@@ -334,8 +334,17 @@ create_node() {
     local ssd_options=(512 1024 1536 2048 2560 3072 3584 4096)
 
     local cpu_val=${cpu_options[$RANDOM % ${#cpu_options[@]}]}
-    local ram_val=${ram_options[$RANDOM % ${#ram_options[@]}]}
-    local ssd_val=${ssd_options[$RANDOM % ${#ssd_options[@]}]}
+    local ram_val=32
+    local ssd_val=512
+
+    while true; do
+        ram_val=${ram_options[$RANDOM % ${#ram_options[@]}]}
+        ssd_val=${ssd_options[$RANDOM % ${#ssd_options[@]}]}
+
+        if ((cpu_val <= 16 && ram_val >= 64)) || ((cpu_val >= 36 && ram_val >= 128)) || ((cpu_val >= 44 && ram_val >= 192)); then
+            break
+        fi
+    done
 
     echo -e "${ORANGE}[*] Запуск контейнера titan_node_$idx (порт $((30000 + idx)), CPU=${cpu_val}, RAM=${ram_val}GB, SSD=${ssd_val}GB)...${NC}"
 
@@ -343,17 +352,21 @@ create_node() {
     docker rm -f "titan_node_$idx" 2>/dev/null
 
     # 🔹 Запрос ключа у пользователя перед запуском контейнера
-    local NODE_KEY=""
-    while [[ -z "$NODE_KEY" ]]; do
-        echo -e "${ORANGE}[*] Введите ключ ноды для titan_node_$idx:${NC}"
-        read -p "Ключ ноды: " NODE_KEY
-        if [[ -z "$NODE_KEY" ]]; then
-            echo -e "${RED}[✗] Ошибка: Ключ ноды не может быть пустым!${NC}"
-        fi
-    done
+    echo -e "${ORANGE}[*] Введите ключ ноды для titan_node_$idx:${NC}"
+    
+    # Проверка, действительно ли запрос происходит
+    echo "DEBUG: Ожидаем ввода ключа..."
+    read -p "Ключ ноды: " NODE_KEY
+
+    # Проверка на пустой ключ
+    if [[ -z "$NODE_KEY" ]]; then
+        echo -e "${RED}[✗] Ошибка: Ключ ноды не введен!${NC}"
+        exit 1
+    fi
+
     echo -e "${GREEN}[✓] Ключ ноды получен: $NODE_KEY${NC}"
 
-    # 🔹 Запуск контейнера с передачей ключа
+    # 🔹 Запуск контейнера с передачей ключа в качестве переменной окружения
     CONTAINER_ID=$(docker run -d --name "titan_node_$idx" --restart unless-stopped \
         --cap-add=NET_ADMIN --network host \
         -e ALL_PROXY="socks5://${proxy_user}:${proxy_pass}@${proxy_host}:${proxy_port}" \
@@ -365,15 +378,27 @@ create_node() {
         echo -e "${RED}[✗] Ошибка: Контейнер titan_node_$idx не был создан!${NC}"
         exit 1
     fi
+
     echo -e "${GREEN}[✓] Контейнер titan_node_$idx запущен! ID: $CONTAINER_ID${NC}"
 
-    # 🔹 Проверяем конфигурацию proxychains4 внутри контейнера
+    # 🔹 Проверяем конфигурацию proxychains4
     echo -e "${ORANGE}[*] Проверяем конфигурацию proxychains4...${NC}"
-    docker exec "$CONTAINER_ID" cat /etc/proxychains4.conf | grep "socks5" || {
-        echo -e "${RED}[✗] Ошибка: proxychains4.conf пуст или отсутствует!${NC}"
-        docker logs "$CONTAINER_ID"
-        exit 1
-    }
+    docker exec "$CONTAINER_ID" cat /etc/proxychains4.conf | grep "socks5" || echo -e "${RED}[✗] Ошибка: proxychains4.conf пуст или отсутствует!${NC}"
+
+    # 🔹 Генерация ключа для ноды (если необходимо)
+    echo -e "${ORANGE}[*] Генерация ключа для ноды...${NC}"
+    docker exec "$CONTAINER_ID" /usr/bin/titan-edge key generate
+
+    # 🔹 Проверяем, был ли ключ сгенерирован
+    echo -e "${ORANGE}[*] Проверка наличия приватного ключа...${NC}"
+    docker exec "$CONTAINER_ID" /usr/bin/titan-edge key show || echo -e "${RED}[✗] Ошибка: Приватный ключ не был сгенерирован!${NC}"
+
+    # 🔹 Настраиваем NAT в контейнере
+    echo -e "${ORANGE}[*] Настраиваем NAT в контейнере titan_node_$idx...${NC}"
+    docker exec "$CONTAINER_ID" bash -c "
+        iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE && \
+        netfilter-persistent save
+    " 2>/dev/null
 
     # 🔹 Проверяем IP через curl
     echo -e "${ORANGE}[*] Проверяем IP внутри контейнера через curl --proxy...${NC}"
@@ -382,25 +407,12 @@ create_node() {
     if [[ -n "$IP_CHECK" ]]; then
         echo -e "${GREEN}[✓] Прокси работает! IP через curl: $IP_CHECK${NC}"
     else
-        echo -e "${RED}[✗] Ошибка: Прокси НЕ работает!${NC}"
+        echo -e "${RED}[✗] Ошибка: Прокси НЕ работает даже напрямую!${NC}"
         docker logs "$CONTAINER_ID"
         exit 1
     fi
 
-    # 🔹 Генерация приватного ключа перед привязкой
-    echo -e "${ORANGE}[*] Генерация приватного ключа в контейнере...${NC}"
-    docker exec "$CONTAINER_ID" /usr/bin/titan-edge key generate
-
-    # 🔹 Проверяем, был ли приватный ключ сгенерирован
-    PRIV_KEY=$(docker exec "$CONTAINER_ID" /usr/bin/titan-edge key show 2>/dev/null | grep "Private Key")
-    if [[ -z "$PRIV_KEY" ]]; then
-        echo -e "${RED}[✗] Ошибка: Приватный ключ не был сгенерирован!${NC}"
-        docker logs "$CONTAINER_ID"
-        exit 1
-    fi
-    echo -e "${GREEN}[✓] Приватный ключ успешно сгенерирован!${NC}"
-
-    # 🔹 Привязываем ноду к переданному ключу
+    # 🔹 Привязываем ноду с переданным ключом
     echo -e "${ORANGE}[*] Привязываем ноду к ключу...${NC}"
     docker exec "$CONTAINER_ID" /usr/bin/titan-edge bind --hash "$NODE_KEY" https://api.titannet.com
 
