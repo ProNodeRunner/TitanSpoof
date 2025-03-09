@@ -256,7 +256,7 @@ RUN chmod +x /usr/bin/titan-edge
 CMD [ "tail", "-f", "/dev/null" ]
 EOF
 
-    # ✅ Собираем кастомный контейнер (убрали --cap-add, так как он не нужен в build)
+    # ✅ Собираем кастомный контейнер (без --cap-add)
     echo -e "${ORANGE}[*] Собираем кастомный Docker-контейнер...${NC}"
     docker build -t mytitan/proxy-titan-edge .
 
