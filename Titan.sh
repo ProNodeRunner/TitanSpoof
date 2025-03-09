@@ -35,6 +35,7 @@ show_logo() {
 }
 
 show_menu() {
+    clear
     tput setaf 3
     show_logo
     echo -e "1) Установить компоненты\n2) Создать/запустить ноды\n3) Проверить статус\n4) Показать логи\n5) Перезапустить\n6) Очистка\n7) Выход"
@@ -44,7 +45,6 @@ show_menu() {
 # (1) Установка компонентов
 ###############################################################################
 install_dependencies() {
-    set -x  # Включаем режим отладки
     echo -e "${ORANGE}[1/7] Инициализация системы...${NC}"
     export DEBIAN_FRONTEND=noninteractive
     export NEEDRESTART_MODE=a  
