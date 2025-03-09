@@ -41,41 +41,13 @@ show_menu() {
     tput sgr0
 }
 
-###############################################################################
-# (1) Установка компонентов
-###############################################################################
 install_dependencies() {
     set -x  # Включаем режим отладки
     echo -e "${ORANGE}[1/7] Инициализация системы...${NC}"
     export DEBIAN_FRONTEND=noninteractive
     export NEEDRESTART_MODE=a  
 
-    # === Настройка NAT перед установкой Docker ===
-    echo -e "${ORANGE}[1.1/7] Настройка NAT ${NC}"
-    if iptables -t nat -L -n | grep -q "MASQUERADE"; then
-        echo -e "${GREEN}[✓] NAT уже настроен.${NC}"
-    else
-        echo -e "${ORANGE}[*] Включение NAT-маскарадинга...${NC}"
-        sudo iptables -t nat -A POSTROUTING -o "$(ip route | grep default | awk '{print $5}')" -j MASQUERADE
-        sudo netfilter-persistent save >/dev/null 2>&1
-        echo -e "${GREEN}[✓] NAT-маскарадинг включен.${NC}"
-    fi
-
-    # === Установка необходимых пакетов ===
-    sudo apt-get update -yq && sudo apt-get upgrade -yq
-    echo -e "${ORANGE}[2/7] Установка пакетов...${NC}"
-    sudo apt-get install -yq \
-        apt-transport-https ca-certificates curl gnupg lsb-release jq \
-        screen cgroup-tools net-tools ccze netcat iptables-persistent bc \
-        ufw git build-essential proxychains4 needrestart debconf-utils
-
-    echo -e "${ORANGE}[2.3/7] Установка Docker...${NC}"
-    sudo apt-get install -yq docker-ce docker-ce-cli containerd.io
-    sudo systemctl start docker
-    sudo systemctl enable docker
-    echo -e "${GREEN}[✓] Docker установлен и работает!${NC}"
-
-    # === Запрос SOCKS5-прокси перед настройкой proxychains4 ===
+    # === Запрос SOCKS5-прокси перед настройкой NAT ===
     while true; do
         echo -ne "${ORANGE}Введите SOCKS5-прокси (формат: host:port:user:pass): ${NC}"
         read PROXY_INPUT
@@ -106,6 +78,31 @@ install_dependencies() {
     # ✅ Сохраняем прокси
     echo "$PROXY_HOST:$PROXY_PORT:$PROXY_USER:$PROXY_PASS" > /root/proxy_config.txt
     chmod 600 /root/proxy_config.txt
+
+    # === Настройка NAT после запроса прокси ===
+    echo -e "${ORANGE}[1.1/7] Настройка NAT ${NC}"
+    if iptables -t nat -L -n | grep -q "MASQUERADE"; then
+        echo -e "${GREEN}[✓] NAT уже настроен.${NC}"
+    else
+        echo -e "${ORANGE}[*] Включение NAT-маскарадинга...${NC}"
+        sudo iptables -t nat -A POSTROUTING -o "$(ip route | grep default | awk '{print $5}')" -j MASQUERADE
+        sudo netfilter-persistent save >/dev/null 2>&1
+        echo -e "${GREEN}[✓] NAT-маскарадинг включен.${NC}"
+    fi
+
+    # === Установка необходимых пакетов ===
+    sudo apt-get update -yq && sudo apt-get upgrade -yq
+    echo -e "${ORANGE}[2/7] Установка пакетов...${NC}"
+    sudo apt-get install -yq \
+        apt-transport-https ca-certificates curl gnupg lsb-release jq \
+        screen cgroup-tools net-tools ccze netcat iptables-persistent bc \
+        ufw git build-essential proxychains4 needrestart debconf-utils
+
+    echo -e "${ORANGE}[2.3/7] Установка Docker...${NC}"
+    sudo apt-get install -yq docker-ce docker-ce-cli containerd.io
+    sudo systemctl start docker
+    sudo systemctl enable docker
+    echo -e "${GREEN}[✓] Docker установлен и работает!${NC}"
 
     # === Извлечение Titan Edge из контейнера ===
     echo -e "${ORANGE}[2.5/7] Извлечение Titan Edge из контейнера...${NC}"
