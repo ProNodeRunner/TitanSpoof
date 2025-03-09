@@ -230,7 +230,7 @@ COPY proxychains4.conf /etc/proxychains4.conf
 
 WORKDIR /root/
 
-# Автоматически подтверждаем установку proxychains4 перед установкой
+# Подтверждаем установку proxychains4 перед установкой
 RUN echo "proxychains4 proxychains4/conf_mode select keep" | debconf-set-selections
 
 # Удаляем старые версии proxychains4 и устанавливаем пакеты без запроса подтверждения
@@ -239,12 +239,7 @@ RUN apt-get update && \
     rm -f /etc/proxychains4.conf && \
     apt-get autoremove -y && apt-get clean && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y \
-    libssl3 \
-    ca-certificates \
-    proxychains4 \
-    tzdata \
-    apt-utils \
-    curl && \
+    libssl3 ca-certificates proxychains4 tzdata apt-utils curl && \
     rm -rf /var/lib/apt/lists/*
 
 RUN chmod +x /usr/bin/titan-edge
