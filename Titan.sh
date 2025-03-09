@@ -215,45 +215,43 @@ EOL
         echo -e "${RED}[!] Ошибка: titan-edge или libgoworkerd.so отсутствуют!${NC}"
         exit 1
     fi
-
-    # ✅ Генерируем Dockerfile
-    echo -e "${ORANGE}[*] Генерируем Dockerfile...${NC}"
-    sudo tee Dockerfile > /dev/null <<EOF
+    
+# ✅ Генерируем Dockerfile
+echo -e "${ORANGE}[*] Генерируем Dockerfile...${NC}"
+sudo tee Dockerfile > /dev/null <<EOF
 FROM ubuntu:22.04
 
+# ✅ Копируем бинарники Titan
 COPY titan-edge /usr/bin/titan-edge
 COPY libgoworkerd.so /usr/lib/libgoworkerd.so
-COPY proxychains4.conf /etc/proxychains4.conf  # ✅ Копируем конфиг сразу
+COPY proxychains4.conf /etc/proxychains4.conf
 
 WORKDIR /root/
 
-# ✅ Устанавливаем нужные пакеты, удаляем старые версии proxychains4 без подтверждений
+# ✅ Устанавливаем нужные пакеты, удаляем proxychains4 без подтверждений
 RUN export DEBIAN_FRONTEND=noninteractive && \
     apt-get update && \
-    apt-get remove --purge -y proxychains4 libproxychains4 && \
-    rm -f /etc/proxychains4.conf && \
-    apt-get autoremove -y && apt-get clean && \
+    echo "proxychains4 proxychains4/conf_mode select keep" | debconf-set-selections && \
     apt-get install -y --no-install-recommends \
     libssl3 ca-certificates proxychains4 curl tzdata iptables \
     net-tools iproute2 iptables-persistent apt-utils && \
     rm -rf /var/lib/apt/lists/*
 
-# ✅ Перезаписываем proxychains4.conf после установки (чтобы точно сохранить конфиг)
-COPY proxychains4.conf /etc/proxychains4.conf
-
-# ✅ Добавляем NAT (iptables) прямо в Dockerfile
-RUN iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE && \
-    iptables-save > /etc/iptables.rules && \
-    echo '#!/bin/bash' > /etc/init.d/iptables-restore && \
+# ✅ Настройка NAT (iptables) внутри контейнера
+RUN echo '#!/bin/sh' > /etc/init.d/iptables-restore && \
     echo 'iptables-restore < /etc/iptables.rules' >> /etc/init.d/iptables-restore && \
     chmod +x /etc/init.d/iptables-restore && \
-    update-rc.d iptables-restore defaults
+    update-rc.d iptables-restore defaults && \
+    iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE && \
+    iptables-save > /etc/iptables.rules
 
-# ✅ Делаем бинарники исполняемыми
+# ✅ Делаем файлы исполняемыми
 RUN chmod +x /usr/bin/titan-edge
 
-CMD ["tail", "-f", "/dev/null"]  # Контейнер остаётся активным
+# ✅ Контейнер остаётся активным
+CMD [ "tail", "-f", "/dev/null" ]
 EOF
+
 
     # ✅ Собираем кастомный контейнер
     echo -e "${ORANGE}[*] Собираем кастомный Docker-контейнер...${NC}"
