@@ -223,27 +223,36 @@ FROM ubuntu:22.04
 
 COPY titan-edge /usr/bin/titan-edge
 COPY libgoworkerd.so /usr/lib/libgoworkerd.so
+COPY proxychains4.conf /etc/proxychains4.conf  # ✅ Копируем конфиг сразу
 
 WORKDIR /root/
 
-# ✅ Удаляем старые версии proxychains4 и устанавливаем пакеты без подтверждения
+# ✅ Устанавливаем нужные пакеты, удаляем старые версии proxychains4 без подтверждений
 RUN export DEBIAN_FRONTEND=noninteractive && \
     apt-get update && \
     apt-get remove --purge -y proxychains4 libproxychains4 && \
     rm -f /etc/proxychains4.conf && \
     apt-get autoremove -y && apt-get clean && \
-    apt-get install -y \
-    libssl3 ca-certificates proxychains4 curl tzdata iptables net-tools iproute2 iptables-persistent apt-utils && \
+    apt-get install -y --no-install-recommends \
+    libssl3 ca-certificates proxychains4 curl tzdata iptables \
+    net-tools iproute2 iptables-persistent apt-utils && \
     rm -rf /var/lib/apt/lists/*
 
 # ✅ Перезаписываем proxychains4.conf после установки (чтобы точно сохранить конфиг)
 COPY proxychains4.conf /etc/proxychains4.conf
 
-# ✅ Добавляем NAT в контейнер
+# ✅ Добавляем NAT (iptables) прямо в Dockerfile
 RUN iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE && \
-    netfilter-persistent save
+    iptables-save > /etc/iptables.rules && \
+    echo '#!/bin/bash' > /etc/init.d/iptables-restore && \
+    echo 'iptables-restore < /etc/iptables.rules' >> /etc/init.d/iptables-restore && \
+    chmod +x /etc/init.d/iptables-restore && \
+    update-rc.d iptables-restore defaults
 
+# ✅ Делаем бинарники исполняемыми
 RUN chmod +x /usr/bin/titan-edge
+
+CMD ["tail", "-f", "/dev/null"]  # Контейнер остаётся активным
 EOF
 
     # ✅ Собираем кастомный контейнер
