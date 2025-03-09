@@ -222,7 +222,7 @@ EOL
     # ✅ Генерируем Dockerfile
 echo -e "${ORANGE}[*] Генерируем Dockerfile...${NC}"
 sudo tee Dockerfile > /dev/null <<EOF
-FFROM ubuntu:22.04
+FROM ubuntu:22.04
 
 COPY titan-edge /usr/bin/titan-edge
 COPY libgoworkerd.so /usr/lib/libgoworkerd.so
