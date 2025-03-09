@@ -231,7 +231,7 @@ WORKDIR /root/
 # ✅ Убираем подтверждения debconf перед установкой proxychains4
 RUN export DEBIAN_FRONTEND=noninteractive && \
     echo 'debconf debconf/frontend select Noninteractive' | debconf-set-selections && \
-    echo 'proxychains4 proxychains4/conf_mode select keep' | debconf-set-selections && \
+    echo "proxychains4 proxychains4/conf_mode boolean false" | debconf-set-selections && \
     apt-get update && \
     apt-get install -y --no-install-recommends \
     libssl3 ca-certificates proxychains4 curl tzdata iptables \
