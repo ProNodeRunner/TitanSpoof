@@ -235,58 +235,40 @@ setup_proxychains_and_build() {
         exit 1
     fi
 
-    # Настраиваем proxychains4
-    echo -e "${GREEN}[✓] Записываем конфигурацию proxychains4...${NC}"
-    sudo tee /etc/proxychains4.conf > /dev/null <<EOL
-strict_chain
-proxy_dns
-tcp_read_time_out 15000
-tcp_connect_time_out 8000
-[ProxyList]
-socks5 $PROXY_HOST $PROXY_PORT $PROXY_USER $PROXY_PASS
-EOL
-
-    # Проверяем, записался ли конфиг
-    if [ ! -f "/etc/proxychains4.conf" ]; then
-        echo -e "${RED}[!] Ошибка: proxychains4.conf не записался!${NC}"
+    # Проверяем, что proxychains4.conf существует
+    if [ ! -f "./proxychains4.conf" ]; then
+        echo -e "${RED}[!] Ошибка: proxychains4.conf отсутствует!${NC}"
         exit 1
     fi
 
-    echo -e "${GREEN}[✓] Proxychains4 настроен!${NC}"
-
-    # ✅ Проверяем работоспособность proxychains4
-    echo -e "${ORANGE}[*] Проверяем работоспособность proxychains4...${NC}"
-    proxychains4 -q curl -s --connect-timeout 3 https://api.ipify.org
-    if [[ $? -ne 0 ]]; then
-        echo -e "${RED}[!] Ошибка: proxychains4 не работает! Проверьте прокси.${NC}"
+    # Проверяем, что файлы бинарников существуют
+    if [ ! -f "./libgoworkerd.so" ] || [ ! -f "./titan-edge" ]; then
+        echo -e "${RED}[!] Ошибка: Не найден один из файлов: libgoworkerd.so или titan-edge!${NC}"
         exit 1
     fi
 
-    # ✅ Генерируем Dockerfile
     echo -e "${ORANGE}[*] Генерируем Dockerfile...${NC}"
     sudo tee Dockerfile > /dev/null <<EOF
 FROM ubuntu:22.04
+
 COPY titan-edge /usr/bin/titan-edge
 COPY libgoworkerd.so /usr/lib/libgoworkerd.so
+COPY proxychains4.conf /etc/proxychains4.conf
+
 WORKDIR /root/
 
-# Устанавливаем зависимости
-RUN apt-get update && apt-get install -y \
-    libssl3 \
-    ca-certificates \
-    proxychains4 \
+RUN apt-get update && apt-get install -y \\
+    libssl3 \\
+    ca-certificates \\
+    proxychains4 \\
     && rm -rf /var/lib/apt/lists/*
 
-# Даем права на выполнение бинарника Titan
 RUN chmod +x /usr/bin/titan-edge
 EOF
 
-    # ✅ Добавляем конфигурацию proxychains в контейнер
-    echo "COPY /etc/proxychains4.conf /etc/proxychains4.conf" | sudo tee -a Dockerfile > /dev/null
-
-    # ✅ Собираем кастомный контейнер
     echo -e "${ORANGE}[*] Собираем кастомный Docker-контейнер...${NC}"
     docker build -t mytitan/proxy-titan-edge .
+
     if [[ $? -ne 0 ]]; then
         echo -e "${RED}[!] Ошибка: Не удалось собрать контейнер!${NC}"
         exit 1
