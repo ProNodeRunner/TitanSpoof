@@ -333,7 +333,6 @@ create_node() {
     local ram_options=(32 64 96 128 160 192 224 256 320 384 448 512)
     local ssd_options=(512 1024 1536 2048 2560 3072 3584 4096)
 
-    # Выбираем случайные значения с логическими ограничениями
     local cpu_val=${cpu_options[$RANDOM % ${#cpu_options[@]}]}
     local ram_val=32
     local ssd_val=512
@@ -342,7 +341,6 @@ create_node() {
         ram_val=${ram_options[$RANDOM % ${#ram_options[@]}]}
         ssd_val=${ssd_options[$RANDOM % ${#ssd_options[@]}]}
 
-        # ✅ Проверка: разумное соотношение CPU/RAM
         if ((cpu_val <= 16 && ram_val >= 64)) || ((cpu_val >= 36 && ram_val >= 128)) || ((cpu_val >= 44 && ram_val >= 192)); then
             break
         fi
@@ -350,13 +348,11 @@ create_node() {
 
     echo -e "${ORANGE}[*] Запуск контейнера titan_node_$idx (порт $((30000 + idx)), CPU=${cpu_val}, RAM=${ram_val}GB, SSD=${ssd_val}GB)...${NC}"
 
-    # ✅ Запускаем контейнер
     CONTAINER_ID=$(docker run -d --name "titan_node_$idx" --restart unless-stopped \
         --cap-add=NET_ADMIN --network host \
         -e ALL_PROXY="socks5://${proxy_user}:${proxy_pass}@${proxy_host}:${proxy_port}" \
         mytitan/proxy-titan-edge 2>/dev/null)
 
-    # Проверяем, что контейнер создался
     if [[ -z "$CONTAINER_ID" ]]; then
         echo -e "${RED}[✗] Ошибка: контейнер titan_node_$idx не был создан!${NC}"
         docker ps -a
@@ -365,27 +361,32 @@ create_node() {
 
     echo -e "${GREEN}[✓] Контейнер titan_node_$idx запущен! ID: $CONTAINER_ID${NC}"
 
-    # ✅ Включаем NAT в контейнере
+    # Проверяем конфигурацию proxychains4
+    echo -e "${ORANGE}[*] Проверяем конфигурацию proxychains4...${NC}"
+    docker exec "$CONTAINER_ID" cat /etc/proxychains4.conf | grep "socks5" || echo -e "${RED}[✗] Ошибка: proxychains4.conf пуст или отсутствует!${NC}"
+
+    # Включаем NAT в контейнере
     echo -e "${ORANGE}[*] Настраиваем NAT в контейнере titan_node_$idx...${NC}"
     docker exec "$CONTAINER_ID" bash -c "
         iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE && \
         netfilter-persistent save
     " 2>/dev/null
 
-    # ✅ Проверяем IP через proxychains4 внутри контейнера
-    echo -e "${ORANGE}[*] Проверяем IP внутри контейнера через proxychains4...${NC}"
-    IP_CHECK=$(docker exec "$CONTAINER_ID" timeout 5 proxychains4 curl -s --connect-timeout 5 https://api.ipify.org)
+    # Проверяем IP напрямую через curl (без proxychains4)
+    echo -e "${ORANGE}[*] Проверяем IP внутри контейнера через curl --proxy...${NC}"
+    IP_CHECK=$(docker exec "$CONTAINER_ID" curl --proxy "socks5://${proxy_user}:${proxy_pass}@${proxy_host}:${proxy_port}" -s --connect-timeout 5 https://api.ipify.org)
 
     if [[ -n "$IP_CHECK" ]]; then
-        echo -e "${GREEN}[✓] Контейнер titan_node_$idx видит IP через прокси: $IP_CHECK${NC}"
+        echo -e "${GREEN}[✓] Прокси работает! IP через curl: $IP_CHECK${NC}"
     else
-        echo -e "${RED}[✗] Ошибка: контейнер titan_node_$idx не видит внешний IP через прокси!${NC}"
+        echo -e "${RED}[✗] Ошибка: Прокси НЕ работает даже напрямую!${NC}"
         docker logs "$CONTAINER_ID"
         exit 1
     fi
 
     echo -e "${GREEN}[✓] Контейнер titan_node_$idx успешно запущен и настроен!${NC}"
 }
+
 
 ###############################################################################
 # (6) Проверка статуса
