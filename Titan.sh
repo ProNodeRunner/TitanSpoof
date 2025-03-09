@@ -50,49 +50,76 @@ install_dependencies() {
     export DEBIAN_FRONTEND=noninteractive
     export NEEDRESTART_MODE=a  
 
-    sudo bash -c "echo 'iptables-persistent iptables-persistent/autosave_v4 boolean false' | debconf-set-selections"
-    sudo bash -c "echo 'iptables-persistent iptables-persistent/autosave_v6 boolean false' | debconf-set-selections"
-    echo 'debconf debconf/frontend select Noninteractive' | sudo debconf-set-selections  
+    # === Запрос SOCKS5-прокси перед началом установки ===
+    while true; do
+        echo -ne "${ORANGE}Введите SOCKS5-прокси (формат: host:port:user:pass): ${NC}"
+        read PROXY_INPUT
 
+        # Проверка пустого ввода
+        if [[ -z "$PROXY_INPUT" ]]; then
+            echo -e "${RED}[!] Ошибка: Ввод не должен быть пустым. Попробуйте снова.${NC}"
+            continue
+        fi
+
+        # Разбираем ввод в переменные
+        IFS=':' read -r PROXY_HOST PROXY_PORT PROXY_USER PROXY_PASS <<< "$PROXY_INPUT"
+
+        # Проверяем корректность
+        if [[ -z "$PROXY_HOST" || -z "$PROXY_PORT" || -z "$PROXY_USER" || -z "$PROXY_PASS" ]]; then
+            echo -e "${RED}[!] Ошибка: Неверный формат! Пример: 1.2.3.4:1080:user:pass${NC}"
+            continue
+        fi
+
+        # Проверяем работу прокси
+        echo -e "${GREEN}[*] Проверяем прокси: socks5://${PROXY_USER}:${PROXY_PASS}@${PROXY_HOST}:${PROXY_PORT}${NC}"
+        PROXY_TEST=$(curl --proxy "socks5://${PROXY_USER}:${PROXY_PASS}@${PROXY_HOST}:${PROXY_PORT}" -s --connect-timeout 5 https://api.ipify.org)
+
+        if [[ -n "$PROXY_TEST" ]]; then
+            echo -e "${GREEN}[✓] Прокси успешно подключен! IP: $PROXY_TEST${NC}"
+            break
+        else
+            echo -e "${RED}[✗] Прокси не работает! Попробуйте другой прокси.${NC}"
+        fi
+    done
+
+    # === Настройка NAT (если требуется) ===
+    echo -e "${ORANGE}[1.1/7] Настройка NAT (если необходимо)...${NC}"
+    if iptables -t nat -L -n | grep -q "MASQUERADE"; then
+        echo -e "${GREEN}[✓] NAT уже настроен.${NC}"
+    else
+        echo -e "${ORANGE}[*] Включение NAT-маскарадинга...${NC}"
+        sudo iptables -t nat -A POSTROUTING -o "$(ip route | grep default | awk '{print $5}')" -j MASQUERADE
+        sudo iptables-save > /etc/iptables/rules.v4
+        echo -e "${GREEN}[✓] NAT-маскарадинг включен.${NC}"
+    fi
+
+    # === Отключение ненужных автообновлений ===
+    echo -e "${ORANGE}[1.2/7] Отключение автообновлений...${NC}"
     sudo systemctl stop unattended-upgrades
     sudo systemctl disable unattended-upgrades || true
 
-    sudo apt-get update -yq && sudo apt-get upgrade -yq
-
+    # === Обновление системы и установка пакетов ===
     echo -e "${ORANGE}[2/7] Установка пакетов...${NC}"
+    sudo apt-get update -yq && sudo apt-get upgrade -yq
     sudo apt-get install -yq \
         apt-transport-https ca-certificates curl gnupg lsb-release jq \
         screen cgroup-tools net-tools ccze netcat iptables-persistent bc \
         ufw git build-essential proxychains4 needrestart
 
-    # Проверяем, установлен ли curl
-    if ! command -v curl &>/dev/null; then
-        echo -e "${RED}[!] curl не установлен! Устанавливаем...${NC}"
-        sudo apt-get install -yq curl
-    fi
-
-    # Добавляем репозиторий Docker
-    echo -e "${ORANGE}[2.1/7] Добавляем репозиторий Docker...${NC}"
+    # === Установка и запуск Docker ===
+    echo -e "${ORANGE}[2.3/7] Установка Docker...${NC}"
     curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo tee /usr/share/keyrings/docker-archive-keyring.gpg > /dev/null
     echo "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
-
-    echo -e "${ORANGE}[2.2/7] Обновление списка пакетов для Docker...${NC}"
     sudo apt-get update -yq
-
-    echo -e "${ORANGE}[2.3/7] Установка Docker...${NC}"
     sudo apt-get install -yq docker-ce docker-ce-cli containerd.io
-
     sudo systemctl start docker
     sudo systemctl enable docker
-
-    # Убираем лишний вопрос о перезапуске служб
-    sudo sed -i 's/#\$nrconf{restart} = "i"/\$nrconf{restart} = "a"/' /etc/needrestart/needrestart.conf
-
     echo -e "${GREEN}[✓] Docker установлен и работает!${NC}"
 
+    # === Извлечение Titan Edge из контейнера ===
     echo -e "${ORANGE}[2.5/7] Извлечение Titan Edge из контейнера...${NC}"
     
-    # Создаём контейнер
+    # Создаем временный контейнер
     CONTAINER_ID=$(docker create nezha123/titan-edge)
     if [[ -z "$CONTAINER_ID" ]]; then
         echo -e "${RED}[!] Ошибка: не удалось создать контейнер для извлечения Titan Edge!${NC}"
@@ -127,6 +154,35 @@ install_dependencies() {
     # Удаляем контейнер
     docker rm -f "$CONTAINER_ID"
     echo -e "${GREEN}[✓] Успешное извлечение бинарника и библиотеки!${NC}"
+
+    # === Запись конфигурации proxychains4 ===
+    echo -e "${GREEN}[✓] Записываем конфигурацию proxychains4...${NC}"
+    sudo tee /etc/proxychains4.conf > /dev/null <<EOL
+strict_chain
+proxy_dns
+tcp_read_time_out 15000
+tcp_connect_time_out 8000
+[ProxyList]
+socks5 $PROXY_HOST $PROXY_PORT $PROXY_USER $PROXY_PASS
+EOL
+
+    # Проверяем, записался ли конфиг
+    if [ ! -f "/etc/proxychains4.conf" ]; then
+        echo -e "${RED}[!] Ошибка: proxychains4.conf не записался!${NC}"
+        exit 1
+    fi
+
+    echo -e "${GREEN}[✓] Proxychains4 настроен!${NC}"
+
+    # === Проверка работоспособности proxychains4 ===
+    echo -e "${ORANGE}[*] Проверяем работоспособность proxychains4...${NC}"
+    proxychains4 -q curl -s --connect-timeout 3 https://api.ipify.org
+    if [[ $? -ne 0 ]]; then
+        echo -e "${RED}[!] Ошибка: proxychains4 не работает! Попробуйте другой прокси.${NC}"
+        exit 1
+    fi
+
+    echo -e "${GREEN}[✓] Установка завершена!${NC}"
 }
 
 ###############################################################################
