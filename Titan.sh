@@ -40,14 +40,16 @@ show_menu() {
     echo -e "1) Установить компоненты\n2) Создать/запустить ноды\n3) Проверить статус\n4) Показать логи\n5) Перезапустить\n6) Очистка\n7) Выход"
     tput sgr0
 }
-
+###############################################################################
+# (1) Установка компонентов
+###############################################################################
 install_dependencies() {
     set -x  # Включаем режим отладки
     echo -e "${ORANGE}[1/7] Инициализация системы...${NC}"
     export DEBIAN_FRONTEND=noninteractive
     export NEEDRESTART_MODE=a  
 
-    # === Запрос SOCKS5-прокси перед настройкой NAT ===
+    # === 1️⃣ Запрос SOCKS5-прокси перед настройкой NAT ===
     while true; do
         echo -ne "${ORANGE}Введите SOCKS5-прокси (формат: host:port:user:pass): ${NC}"
         read PROXY_INPUT
@@ -79,7 +81,7 @@ install_dependencies() {
     echo "$PROXY_HOST:$PROXY_PORT:$PROXY_USER:$PROXY_PASS" > /root/proxy_config.txt
     chmod 600 /root/proxy_config.txt
 
-    # === Настройка NAT после запроса прокси ===
+    # === 2️⃣ Настройка NAT (сразу после запроса прокси) ===
     echo -e "${ORANGE}[1.1/7] Настройка NAT ${NC}"
     if iptables -t nat -L -n | grep -q "MASQUERADE"; then
         echo -e "${GREEN}[✓] NAT уже настроен.${NC}"
@@ -90,7 +92,7 @@ install_dependencies() {
         echo -e "${GREEN}[✓] NAT-маскарадинг включен.${NC}"
     fi
 
-    # === Установка необходимых пакетов ===
+    # === 3️⃣ Установка необходимых пакетов ===
     sudo apt-get update -yq && sudo apt-get upgrade -yq
     echo -e "${ORANGE}[2/7] Установка пакетов...${NC}"
     sudo apt-get install -yq \
@@ -104,7 +106,7 @@ install_dependencies() {
     sudo systemctl enable docker
     echo -e "${GREEN}[✓] Docker установлен и работает!${NC}"
 
-    # === Извлечение Titan Edge из контейнера ===
+    # === 4️⃣ Извлечение Titan Edge из контейнера ===
     echo -e "${ORANGE}[2.5/7] Извлечение Titan Edge из контейнера...${NC}"
     CONTAINER_ID=$(docker create nezha123/titan-edge)
     if [[ -z "$CONTAINER_ID" ]]; then
