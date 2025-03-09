@@ -221,14 +221,7 @@ EOL
     sudo tee Dockerfile > /dev/null <<EOF
 FROM ubuntu:22.04
 
-# ✅ Копируем бинарники Titan и конфиг proxychains4
-COPY titan-edge /usr/bin/titan-edge
-COPY libgoworkerd.so /usr/lib/libgoworkerd.so
-COPY proxychains4.conf /etc/proxychains4.conf
-
-WORKDIR /root/
-
-# ✅ Отключаем подтверждения и устанавливаем пакеты
+# ✅ Обновляем систему и устанавливаем пакеты
 RUN export DEBIAN_FRONTEND=noninteractive && \
     apt-get update && \
     apt-get install -y --no-install-recommends \
@@ -236,27 +229,38 @@ RUN export DEBIAN_FRONTEND=noninteractive && \
     net-tools iproute2 iptables-persistent apt-utils && \
     rm -rf /var/lib/apt/lists/*
 
-# ✅ Восстанавливаем конфигурацию proxychains4
+# ✅ Копируем бинарники Titan и конфиг proxychains4
+COPY titan-edge /usr/bin/titan-edge
+COPY libgoworkerd.so /usr/lib/libgoworkerd.so
 COPY proxychains4.conf /etc/proxychains4.conf
 
-# ✅ Настраиваем NAT (iptables) с root-доступом
-RUN iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE && \
-    iptables-save > /etc/iptables.rules
+WORKDIR /root/
 
-# ✅ Автозагрузка NAT при запуске контейнера
-RUN echo '#!/bin/sh' > /etc/init.d/iptables-restore && \
-    echo 'iptables-restore < /etc/iptables.rules' >> /etc/init.d/iptables-restore && \
-    chmod +x /etc/init.d/iptables-restore && \
-    update-rc.d iptables-restore defaults
-
-# ✅ Делаем файлы исполняемыми
+# ✅ Настраиваем NAT (iptables)
 RUN chmod +x /usr/bin/titan-edge
 
+# ✅ Добавляем автонастройку NAT при запуске контейнера
+COPY iptables.sh /usr/bin/iptables.sh
+RUN chmod +x /usr/bin/iptables.sh
+
 # ✅ Контейнер остаётся активным
-CMD [ "tail", "-f", "/dev/null" ]
+CMD [ "/usr/bin/iptables.sh" ]
 EOF
 
-    # ✅ Собираем кастомный контейнер (без --cap-add)
+    # ✅ Создаём `iptables.sh` для настройки NAT
+    echo -e "${ORANGE}[*] Генерируем iptables.sh...${NC}"
+    sudo tee iptables.sh > /dev/null <<'EOL'
+#!/bin/sh
+echo "[*] Настраиваем NAT (iptables)..."
+iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
+iptables-save > /etc/iptables.rules
+echo "[✓] NAT настроен!"
+exec tail -f /dev/null
+EOL
+
+    chmod +x iptables.sh
+
+    # ✅ Собираем кастомный контейнер (убираем `buildx` и `--cap-add`)
     echo -e "${ORANGE}[*] Собираем кастомный Docker-контейнер...${NC}"
     docker build -t mytitan/proxy-titan-edge .
 
