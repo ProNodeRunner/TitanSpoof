@@ -231,6 +231,7 @@ WORKDIR /root/
 # ✅ Убираем подтверждения debconf перед установкой proxychains4
 RUN export DEBIAN_FRONTEND=noninteractive && \
     echo 'debconf debconf/frontend select Noninteractive' | debconf-set-selections && \
+    echo 'proxychains4 proxychains4/conf_mode select keep' | debconf-set-selections && \
     apt-get update && \
     apt-get install -y --no-install-recommends \
     libssl3 ca-certificates proxychains4 curl tzdata iptables \
@@ -238,12 +239,14 @@ RUN export DEBIAN_FRONTEND=noninteractive && \
     rm -rf /var/lib/apt/lists/*
 
 # ✅ Настраиваем NAT (iptables) внутри контейнера
+RUN iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE && \
+    iptables-save > /etc/iptables.rules
+
+# ✅ Автозагрузка NAT при запуске контейнера
 RUN echo '#!/bin/sh' > /etc/init.d/iptables-restore && \
     echo 'iptables-restore < /etc/iptables.rules' >> /etc/init.d/iptables-restore && \
     chmod +x /etc/init.d/iptables-restore && \
-    update-rc.d iptables-restore defaults && \
-    iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE && \
-    iptables-save > /etc/iptables.rules
+    update-rc.d iptables-restore defaults
 
 # ✅ Делаем файлы исполняемыми
 RUN chmod +x /usr/bin/titan-edge
@@ -263,8 +266,6 @@ EOF
 
     echo -e "${GREEN}[✓] Кастомный контейнер собран успешно!${NC}"
 }
-
-
 
 ###############################################################################
 # (4) Создание/запуск ноды
