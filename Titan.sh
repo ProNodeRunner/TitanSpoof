@@ -169,7 +169,7 @@ generate_fake_mac() {
     printf "02:%02x:%02x:%02x:%02x:%02x" $((RANDOM%256)) $((RANDOM%256)) $((RANDOM%256)) $((RANDOM%256)) $((RANDOM%256))
 }
 
-###############################################################################
+################################################################################
 # (3) Настройка proxychains4 и создание кастомного контейнера
 ###############################################################################
 setup_proxychains_and_build() {
@@ -190,7 +190,8 @@ setup_proxychains_and_build() {
     sudo apt-get autoremove -y
     sudo apt-get clean
 
-    # ✅ Автоматическое подтверждение конфигурации proxychains4, чтобы избежать запроса
+    # ✅ Автоматическое подтверждение конфигурации proxychains4
+    echo "proxychains4 proxychains4/conf_mode seen true" | sudo debconf-set-selections
     echo "proxychains4 proxychains4/conf_mode select keep" | sudo debconf-set-selections
 
     # Настраиваем proxychains4
@@ -220,8 +221,8 @@ EOL
     fi
 
     # ✅ Генерируем Dockerfile
-echo -e "${ORANGE}[*] Генерируем Dockerfile...${NC}"
-sudo tee Dockerfile > /dev/null <<EOF
+    echo -e "${ORANGE}[*] Генерируем Dockerfile...${NC}"
+    sudo tee Dockerfile > /dev/null <<EOF
 FROM ubuntu:22.04
 
 COPY titan-edge /usr/bin/titan-edge
@@ -230,9 +231,10 @@ COPY libgoworkerd.so /usr/lib/libgoworkerd.so
 WORKDIR /root/
 
 # ✅ Подтверждаем установку proxychains4 перед установкой
-RUN echo "proxychains4 proxychains4/conf_mode select keep" | debconf-set-selections
+RUN echo "proxychains4 proxychains4/conf_mode seen true" | debconf-set-selections && \
+    echo "proxychains4 proxychains4/conf_mode select keep" | debconf-set-selections
 
-# ✅ Удаляем старые версии proxychains4 и устанавливаем пакеты
+# ✅ Удаляем старые версии proxychains4 и устанавливаем пакеты без подтверждения
 RUN apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get remove --purge -y proxychains4 libproxychains4 && \
     rm -f /etc/proxychains4.conf && \
@@ -244,13 +246,12 @@ RUN apt-get update && \
 # ✅ Перезаписываем proxychains4.conf после установки (чтобы точно сохранить конфиг)
 COPY proxychains4.conf /etc/proxychains4.conf
 
-# ✅ Добавляем NAT в контейнер
+# ✅ Добавляем NAT в контейнер для маршрутизации трафика
 RUN iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE && \
     netfilter-persistent save
 
 RUN chmod +x /usr/bin/titan-edge
 EOF
-
 
     # ✅ Собираем кастомный контейнер
     echo -e "${ORANGE}[*] Собираем кастомный Docker-контейнер...${NC}"
