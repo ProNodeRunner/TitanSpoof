@@ -387,6 +387,19 @@ create_node() {
         exit 1
     fi
 
+    # 🔹 Генерация приватного ключа перед привязкой
+    echo -e "${ORANGE}[*] Генерация приватного ключа в контейнере...${NC}"
+    docker exec "$CONTAINER_ID" /usr/bin/titan-edge key generate
+
+    # 🔹 Проверяем, был ли приватный ключ сгенерирован
+    PRIV_KEY=$(docker exec "$CONTAINER_ID" /usr/bin/titan-edge key show 2>/dev/null | grep "Private Key")
+    if [[ -z "$PRIV_KEY" ]]; then
+        echo -e "${RED}[✗] Ошибка: Приватный ключ не был сгенерирован!${NC}"
+        docker logs "$CONTAINER_ID"
+        exit 1
+    fi
+    echo -e "${GREEN}[✓] Приватный ключ успешно сгенерирован!${NC}"
+
     # 🔹 Привязываем ноду к переданному ключу
     echo -e "${ORANGE}[*] Привязываем ноду к ключу...${NC}"
     docker exec "$CONTAINER_ID" /usr/bin/titan-edge bind --hash "$NODE_KEY" https://api.titannet.com
