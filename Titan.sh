@@ -319,7 +319,7 @@ setup_nodes() {
 }
 
 ###############################################################################
-# (5) Запуск контейнера с учетом спуфинга
+# (5) Запуск контейнера с учетом спуфинга + ключ ноды
 ###############################################################################
 create_node() {
     local idx="$1"
@@ -328,7 +328,7 @@ create_node() {
     local proxy_user="$4"
     local proxy_pass="$5"
 
-    # Генерация случайных параметров для спуфинга (CPU, RAM, SSD)
+    # 🔹 Генерация случайных параметров для спуфинга (CPU, RAM, SSD)
     local cpu_options=(12 14 16 18 20 22 24 26 28 30 32 34 36 38 40 42 44 46)
     local ram_options=(32 64 96 128 160 192 224 256 320 384 448 512)
     local ssd_options=(512 1024 1536 2048 2560 3072 3584 4096)
@@ -348,38 +348,45 @@ create_node() {
 
     echo -e "${ORANGE}[*] Запуск контейнера titan_node_$idx (порт $((30000 + idx)), CPU=${cpu_val}, RAM=${ram_val}GB, SSD=${ssd_val}GB)...${NC}"
 
-    # Очищаем старый контейнер (если он остался)
+    # 🔹 Удаляем старый контейнер, если он был
     docker rm -f "titan_node_$idx" 2>/dev/null
 
-    # Запускаем контейнер
+    # 🔹 Запрос ключа у пользователя
+    echo -e "${ORANGE}[*] Введите ключ ноды для titan_node_$idx:${NC}"
+    read -p "Ключ ноды: " NODE_KEY
+
+    if [[ -z "$NODE_KEY" ]]; then
+        echo -e "${RED}[✗] Ошибка: Ключ ноды не введен!${NC}"
+        exit 1
+    fi
+
+    # 🔹 Запуск контейнера
     CONTAINER_ID=$(docker run -d --name "titan_node_$idx" --restart unless-stopped \
         --cap-add=NET_ADMIN --network host \
         -e ALL_PROXY="socks5://${proxy_user}:${proxy_pass}@${proxy_host}:${proxy_port}" \
         mytitan/proxy-titan-edge 2>/dev/null)
 
-    # Проверяем, что контейнер создался
     if [[ -z "$CONTAINER_ID" ]]; then
-        echo -e "${RED}[✗] Ошибка: контейнер titan_node_$idx не был создан!${NC}"
-        docker ps -a
+        echo -e "${RED}[✗] Ошибка: Контейнер titan_node_$idx не был создан!${NC}"
         exit 1
     fi
 
     echo -e "${GREEN}[✓] Контейнер titan_node_$idx запущен! ID: $CONTAINER_ID${NC}"
 
-    # Проверяем конфигурацию proxychains4
+    # 🔹 Проверяем конфигурацию proxychains4
     echo -e "${ORANGE}[*] Проверяем конфигурацию proxychains4...${NC}"
     docker exec "$CONTAINER_ID" cat /etc/proxychains4.conf | grep "socks5" || echo -e "${RED}[✗] Ошибка: proxychains4.conf пуст или отсутствует!${NC}"
 
-    # Включаем NAT в контейнере с таймаутом 5 секунд
+    # 🔹 Настраиваем NAT в контейнере
     echo -e "${ORANGE}[*] Настраиваем NAT в контейнере titan_node_$idx...${NC}"
-    timeout 5 docker exec "$CONTAINER_ID" bash -c "
+    docker exec "$CONTAINER_ID" bash -c "
         iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE && \
         netfilter-persistent save
     " 2>/dev/null
 
-    # Проверяем IP напрямую через curl (без proxychains4)
+    # 🔹 Проверяем IP через curl
     echo -e "${ORANGE}[*] Проверяем IP внутри контейнера через curl --proxy...${NC}"
-    IP_CHECK=$(timeout 5 docker exec "$CONTAINER_ID" curl --proxy "socks5://${proxy_user}:${proxy_pass}@${proxy_host}:${proxy_port}" -s --connect-timeout 5 https://api.ipify.org)
+    IP_CHECK=$(docker exec "$CONTAINER_ID" curl --proxy "socks5://${proxy_user}:${proxy_pass}@${proxy_host}:${proxy_port}" -s --connect-timeout 5 https://api.ipify.org)
 
     if [[ -n "$IP_CHECK" ]]; then
         echo -e "${GREEN}[✓] Прокси работает! IP через curl: $IP_CHECK${NC}"
@@ -389,23 +396,22 @@ create_node() {
         exit 1
     fi
 
-    # 🔥 Запрашиваем ключ для привязки ноды (с сайта)
-    echo -e "${ORANGE}[*] Введите ключ ноды для titan_node_$idx:${NC}"
-    read -p "Ключ ноды: " NODE_KEY
+    # 🔹 Запуск ноды и передача ключа
+    echo -e "${ORANGE}[*] Привязываем ноду к ключу...${NC}"
+    docker exec "$CONTAINER_ID" /usr/bin/titan-edge bind "$NODE_KEY"
 
-    # Привязываем ноду
-    echo -e "${ORANGE}[*] Привязка ноды к сети Titan...${NC}"
-    docker exec -it "$CONTAINER_ID" /usr/bin/titan-edge bind "$NODE_KEY"
+    # 🔹 Проверяем, зарегистрировалась ли нода
+    sleep 5
+    NODE_INFO=$(docker exec "$CONTAINER_ID" /usr/bin/titan-edge show 2>/dev/null | grep "Device ID")
 
-    # Генерируем внутренний ключ ноды
-    echo -e "${ORANGE}[*] Генерация внутреннего ключа ноды...${NC}"
-    docker exec -it "$CONTAINER_ID" /usr/bin/titan-edge key generate
+    if [[ -z "$NODE_INFO" ]]; then
+        echo -e "${RED}[✗] Ошибка: Нода не зарегистрировалась!${NC}"
+        docker logs "$CONTAINER_ID"
+        exit 1
+    fi
 
-    # Проверяем статус ноды
-    echo -e "${ORANGE}[*] Проверка статуса ноды...${NC}"
-    docker exec -it "$CONTAINER_ID" /usr/bin/titan-edge show
-
-    echo -e "${GREEN}[✓] Контейнер titan_node_$idx успешно запущен и настроен!${NC}"
+    echo -e "${GREEN}[✓] Нода успешно зарегистрирована! $NODE_INFO${NC}"
+    echo -e "${GREEN}[✓] Контейнер titan_node_$idx полностью настроен и работает!${NC}"
 }
 
 ###############################################################################
