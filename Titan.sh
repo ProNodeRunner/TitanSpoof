@@ -333,6 +333,7 @@ create_node() {
     local ram_options=(32 64 96 128 160 192 224 256 320 384 448 512)
     local ssd_options=(512 1024 1536 2048 2560 3072 3584 4096)
 
+    # Выбираем случайные значения
     local cpu_val=${cpu_options[$RANDOM % ${#cpu_options[@]}]}
     local ram_val=32
     local ssd_val=512
@@ -341,6 +342,7 @@ create_node() {
         ram_val=${ram_options[$RANDOM % ${#ram_options[@]}]}
         ssd_val=${ssd_options[$RANDOM % ${#ssd_options[@]}]}
 
+        # ✅ Логичное соотношение CPU/RAM
         if ((cpu_val <= 16 && ram_val >= 64)) || ((cpu_val >= 36 && ram_val >= 128)) || ((cpu_val >= 44 && ram_val >= 192)); then
             break
         fi
@@ -348,10 +350,10 @@ create_node() {
 
     echo -e "${ORANGE}[*] Запуск контейнера titan_node_$idx (порт $((30000 + idx)), CPU=${cpu_val}, RAM=${ram_val}GB, SSD=${ssd_val}GB)...${NC}"
 
-    # Очищаем старый контейнер (если он остался)
+    # Очищаем старый контейнер (если остался)
     docker rm -f "titan_node_$idx" 2>/dev/null
 
-    # Запускаем контейнер
+    # Запускаем новый контейнер
     CONTAINER_ID=$(docker run -d --name "titan_node_$idx" --restart unless-stopped \
         --cap-add=NET_ADMIN --network host \
         -e ALL_PROXY="socks5://${proxy_user}:${proxy_pass}@${proxy_host}:${proxy_port}" \
@@ -368,18 +370,24 @@ create_node() {
 
     # Проверяем конфигурацию proxychains4
     echo -e "${ORANGE}[*] Проверяем конфигурацию proxychains4...${NC}"
-    docker exec "$CONTAINER_ID" cat /etc/proxychains4.conf | grep "socks5" || echo -e "${RED}[✗] Ошибка: proxychains4.conf пуст или отсутствует!${NC}"
+    docker exec "$CONTAINER_ID" cat /etc/proxychains4.conf | grep "socks5" || {
+        echo -e "${RED}[✗] Ошибка: proxychains4.conf пуст или отсутствует!${NC}"
+        exit 1
+    }
 
-    # Включаем NAT в контейнере с таймаутом 5 секунд
+    # Включаем NAT в контейнере
     echo -e "${ORANGE}[*] Настраиваем NAT в контейнере titan_node_$idx...${NC}"
-    timeout 5 docker exec "$CONTAINER_ID" bash -c "
+    docker exec "$CONTAINER_ID" bash -c "
         iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE && \
         netfilter-persistent save
-    " 2>/dev/null
+    " 2>/dev/null || {
+        echo -e "${RED}[✗] Ошибка: NAT не настроен!${NC}"
+        exit 1
+    }
 
     # Проверяем IP напрямую через curl (без proxychains4)
     echo -e "${ORANGE}[*] Проверяем IP внутри контейнера через curl --proxy...${NC}"
-    IP_CHECK=$(timeout 5 docker exec "$CONTAINER_ID" curl --proxy "socks5://${proxy_user}:${proxy_pass}@${proxy_host}:${proxy_port}" -s --connect-timeout 5 https://api.ipify.org)
+    IP_CHECK=$(docker exec "$CONTAINER_ID" curl --proxy "socks5://${proxy_user}:${proxy_pass}@${proxy_host}:${proxy_port}" -s --connect-timeout 5 https://api.ipify.org)
 
     if [[ -n "$IP_CHECK" ]]; then
         echo -e "${GREEN}[✓] Прокси работает! IP через curl: $IP_CHECK${NC}"
@@ -389,9 +397,20 @@ create_node() {
         exit 1
     fi
 
-    echo -e "${GREEN}[✓] Контейнер titan_node_$idx успешно запущен и настроен!${NC}"
-}
+    # Проверяем IP через proxychains4
+    echo -e "${ORANGE}[*] Проверяем IP внутри контейнера через proxychains4...${NC}"
+    PROXY_IP_CHECK=$(docker exec "$CONTAINER_ID" timeout 5 proxychains4 curl -s --connect-timeout 5 https://api.ipify.org)
 
+    if [[ -n "$PROXY_IP_CHECK" ]]; then
+        echo -e "${GREEN}[✓] Контейнер titan_node_$idx видит IP через proxychains4: $PROXY_IP_CHECK${NC}"
+    else
+        echo -e "${RED}[✗] Ошибка: Контейнер titan_node_$idx не видит внешний IP через proxychains4!${NC}"
+        docker logs "$CONTAINER_ID"
+        exit 1
+    fi
+
+    echo -e "${GREEN}[✓] Контейнер titan_node_$idx успешно запущен и готов к работе!${NC}"
+}
 
 ###############################################################################
 # (6) Проверка статуса
