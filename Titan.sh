@@ -50,7 +50,7 @@ install_dependencies() {
     export DEBIAN_FRONTEND=noninteractive
     export NEEDRESTART_MODE=a  
 
-    # === Настройка NAT (если требуется) ===
+    # === Настройка NAT ===
     echo -e "${ORANGE}[1.1/7] Настройка NAT ${NC}"
     if iptables -t nat -L -n | grep -q "MASQUERADE"; then
         echo -e "${GREEN}[✓] NAT уже настроен.${NC}"
