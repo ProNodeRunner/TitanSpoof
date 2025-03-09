@@ -351,21 +351,16 @@ create_node() {
     echo -e "${ORANGE}[*] Запуск контейнера titan_node_$idx (порт $((30000 + idx)), CPU=${cpu_val}, RAM=${ram_val}GB, SSD=${ssd_val}GB)...${NC}"
 
     # ✅ Запускаем контейнер с NAT, правами NET_ADMIN и proxychains
-    CONTAINER_ID=$(docker run -d \
-        --name "titan_node_$idx" \
-        --restart unless-stopped \
-        --cap-add=NET_ADMIN \
-        --network host \
-        --cpu-quota=$((cpu_val * 100000)) \
-        --memory="${ram_val}g" \
-        -v /etc/proxychains4.conf:/etc/proxychains4.conf:ro \
+    CONTAINER_ID=$(docker run -d --name "titan_node_$idx" --restart unless-stopped \
+        --cap-add=NET_ADMIN --network host \
         -e ALL_PROXY="socks5://${proxy_user}:${proxy_pass}@${proxy_host}:${proxy_port}" \
-        mytitan/proxy-titan-edge)
+        mytitan/proxy-titan-edge 2>/dev/null)
 
+    # Проверяем, что контейнер запущен
     if [[ -z "$CONTAINER_ID" ]]; then
-        echo -e "${RED}[✗] Ошибка запуска контейнера titan_node_$idx${NC}"
-        docker ps -a | grep "titan_node_$idx"
-        return 1
+        echo -e "${RED}[✗] Ошибка: контейнер titan_node_$idx не был создан!${NC}"
+        docker ps -a
+        exit 1
     fi
 
     echo -e "${GREEN}[✓] Контейнер titan_node_$idx запущен! ID: $CONTAINER_ID${NC}"
@@ -375,10 +370,10 @@ create_node() {
     docker exec "$CONTAINER_ID" bash -c "
         iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE && \
         netfilter-persistent save
-    "
+    " 2>/dev/null
 
-    # ✅ Проверяем, видит ли контейнер внешний IP через прокси (таймаут 5 секунд)
-    echo -e "${ORANGE}[*] Проверяем IP внутри контейнера через proxychains4 (таймаут 5 сек)...${NC}"
+    # ✅ Проверяем, видит ли контейнер внешний IP через прокси
+    echo -e "${ORANGE}[*] Проверяем IP внутри контейнера через proxychains4...${NC}"
     IP_CHECK=$(docker exec "$CONTAINER_ID" timeout 5 proxychains4 curl -s --connect-timeout 5 https://api.ipify.org)
 
     if [[ -n "$IP_CHECK" ]]; then
@@ -386,11 +381,10 @@ create_node() {
     else
         echo -e "${RED}[✗] Ошибка: контейнер titan_node_$idx не видит внешний IP через прокси!${NC}"
         docker logs "$CONTAINER_ID"
-        return 1
+        exit 1
     fi
 
-    # ✅ Логирование для отладки
-    echo -e "${GREEN}[✓] Контейнер titan_node_$idx полностью запущен!${NC}"
+    echo -e "${GREEN}[✓] Контейнер titan_node_$idx запущен и готов к работе!${NC}"
 }
 
 ###############################################################################
