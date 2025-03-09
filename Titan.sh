@@ -222,7 +222,7 @@ EOL
     # ✅ Генерируем Dockerfile
 echo -e "${ORANGE}[*] Генерируем Dockerfile...${NC}"
 sudo tee Dockerfile > /dev/null <<EOF
-FROM ubuntu:22.04
+FFROM ubuntu:22.04
 
 COPY titan-edge /usr/bin/titan-edge
 COPY libgoworkerd.so /usr/lib/libgoworkerd.so
@@ -238,11 +238,15 @@ RUN apt-get update && \
     rm -f /etc/proxychains4.conf && \
     apt-get autoremove -y && apt-get clean && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y \
-    libssl3 ca-certificates proxychains4 curl tzdata apt-utils debconf-utils && \
+    libssl3 ca-certificates proxychains4 curl tzdata iptables net-tools iproute2 iptables-persistent apt-utils debconf-utils && \
     rm -rf /var/lib/apt/lists/*
 
 # ✅ Перезаписываем proxychains4.conf после установки (чтобы точно сохранить конфиг)
 COPY proxychains4.conf /etc/proxychains4.conf
+
+# ✅ Добавляем NAT в контейнер
+RUN iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE && \
+    netfilter-persistent save
 
 RUN chmod +x /usr/bin/titan-edge
 EOF
@@ -338,13 +342,14 @@ create_node() {
 
     echo -e "${ORANGE}[*] Запуск контейнера titan_node_$idx (порт $((30000 + idx)), CPU=${cpu_val}, RAM=${ram_val}GB, SSD=${ssd_val}GB)...${NC}"
 
-    # ✅ Запускаем контейнер с кастомным образом и спуфингом
+    # ✅ Запускаем контейнер с NAT, правами NET_ADMIN и proxychains
     CONTAINER_ID=$(docker run -d \
         --name "titan_node_$idx" \
         --restart unless-stopped \
+        --cap-add=NET_ADMIN \  # ⚡ Даем контейнеру права на изменение сети
+        --network host \  # ⚡ Используем NAT-хост
         --cpu-quota=$((cpu_val * 100000)) \
         --memory="${ram_val}g" \
-        -p "$((30000 + idx)):1234/udp" \
         -v /etc/proxychains4.conf:/etc/proxychains4.conf:ro \
         -e ALL_PROXY="socks5://${proxy_user}:${proxy_pass}@${proxy_host}:${proxy_port}" \
         mytitan/proxy-titan-edge)
@@ -353,6 +358,13 @@ create_node() {
         echo -e "${RED}[✗] Ошибка запуска контейнера titan_node_$idx${NC}"
         return 1
     fi
+
+    # ✅ Включаем NAT в контейнере
+    echo -e "${ORANGE}[*] Настраиваем NAT в контейнере titan_node_$idx...${NC}"
+    docker exec "$CONTAINER_ID" bash -c "
+        iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE && \
+        netfilter-persistent save
+    "
 
     # ✅ Проверяем, видит ли контейнер внешний IP через прокси
     echo -e "${ORANGE}[*] Проверяем IP внутри контейнера через proxychains4...${NC}"
