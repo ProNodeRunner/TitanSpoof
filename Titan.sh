@@ -221,23 +221,23 @@ echo -e "${ORANGE}[*] Генерируем Dockerfile...${NC}"
 sudo tee Dockerfile > /dev/null <<EOF
 FROM ubuntu:22.04
 
-# ✅ Копируем бинарники Titan
+# ✅ Копируем бинарники Titan и конфиг proxychains4
 COPY titan-edge /usr/bin/titan-edge
 COPY libgoworkerd.so /usr/lib/libgoworkerd.so
 COPY proxychains4.conf /etc/proxychains4.conf
 
 WORKDIR /root/
 
-# ✅ Устанавливаем нужные пакеты, удаляем proxychains4 без подтверждений
+# ✅ Устанавливаем пакеты, удаляем proxychains4 БЕЗ ПОДТВЕРЖДЕНИЙ
 RUN export DEBIAN_FRONTEND=noninteractive && \
     apt-get update && \
-    echo "proxychains4 proxychains4/conf_mode select keep" | debconf-set-selections && \
+    echo "proxychains4	proxychains4/conf_mode	boolean false" | debconf-set-selections && \
     apt-get install -y --no-install-recommends \
     libssl3 ca-certificates proxychains4 curl tzdata iptables \
     net-tools iproute2 iptables-persistent apt-utils && \
     rm -rf /var/lib/apt/lists/*
 
-# ✅ Настройка NAT (iptables) внутри контейнера
+# ✅ Настраиваем NAT (iptables) внутри контейнера
 RUN echo '#!/bin/sh' > /etc/init.d/iptables-restore && \
     echo 'iptables-restore < /etc/iptables.rules' >> /etc/init.d/iptables-restore && \
     chmod +x /etc/init.d/iptables-restore && \
@@ -251,6 +251,7 @@ RUN chmod +x /usr/bin/titan-edge
 # ✅ Контейнер остаётся активным
 CMD [ "tail", "-f", "/dev/null" ]
 EOF
+
 
 
     # ✅ Собираем кастомный контейнер
